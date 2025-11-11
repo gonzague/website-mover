@@ -18,8 +18,6 @@ interface PlanScreenProps {
 }
 
 export function PlanScreen({ source, dest, onBack, onNext }: PlanScreenProps) {
-  const hasStartedScan = useRef(false)
-
   // Use custom hooks for scan and plan logic
   const {
     scanning,
@@ -51,15 +49,12 @@ export function PlanScreen({ source, dest, onBack, onNext }: PlanScreenProps) {
   })
 
   // Auto-start scan when component mounts (only once)
+  // Empty dependency array ensures this only runs on initial mount
   useEffect(() => {
-    if (!hasStartedScan.current) {
-      hasStartedScan.current = true
-      startScan()
-    }
-    return () => {
-      cancelScan()
-    }
-  }, [startScan, cancelScan])
+    startScan()
+    // Don't cleanup - let the scan complete even if component unmounts temporarily (StrictMode)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const error = scanError || planError
 

@@ -23,15 +23,17 @@ export function useScan({ sourceConfig, onComplete }: UseScanOptions) {
   const [progress, setProgress] = useState<ScanProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const scanningRef = useRef(false)
 
   const startScan = useCallback(async () => {
     // Prevent multiple concurrent scans
-    if (abortControllerRef.current) {
+    if (scanningRef.current) {
       console.warn('Scan already in progress, ignoring duplicate request')
       return
     }
 
     console.log('Starting scan...')
+    scanningRef.current = true
     setScanning(true)
     setError(null)
     setProgress(null)
@@ -127,6 +129,7 @@ export function useScan({ sourceConfig, onComplete }: UseScanOptions) {
       }
     } finally {
       console.log('Scan finished')
+      scanningRef.current = false
       setScanning(false)
       abortControllerRef.current = null
     }
