@@ -8,8 +8,8 @@ import (
 	"net"
 	"time"
 
+	"github.com/gonzague/website-mover/backend/internal/sshutil"
 	"github.com/pkg/sftp"
-	"golang.org/x/crypto/ssh"
 )
 
 // ProbeSFTP tests an SFTP connection and returns detailed information
@@ -19,27 +19,6 @@ func ProbeSFTP(config ConnectionConfig) (*ProbeResult, error) {
 		Capabilities: Capabilities{},
 		Performance:  Performance{},
 		Badges:       []string{},
-	}
-
-	// Build SSH client config
-	sshConfig := &ssh.ClientConfig{
-		User: config.Username,
-		Auth: []ssh.AuthMethod{
-			ssh.Password(config.Password),
-		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TODO: Add proper host key verification
-		Timeout:         10 * time.Second,
-	}
-
-	// If SSH key is provided, use it
-	if config.SSHKey != "" {
-		signer, err := ssh.ParsePrivateKey([]byte(config.SSHKey))
-		if err != nil {
-			result.Success = false
-			result.ErrorMessage = fmt.Sprintf("Failed to parse SSH key: %v", err)
-			return result, err
-		}
-		sshConfig.Auth = []ssh.AuthMethod{ssh.PublicKeys(signer)}
 	}
 
 	// Measure connection time
@@ -58,8 +37,15 @@ func ProbeSFTP(config ConnectionConfig) (*ProbeResult, error) {
 	result.Performance.LatencyMs = float64(result.Performance.Latency.Milliseconds())
 	conn.Close()
 
-	// Establish SSH connection
-	sshConn, err := ssh.Dial("tcp", addr, sshConfig)
+	// Establish SSH connection using shared utility
+	sshConn, err := sshutil.CreateSSHClient(sshutil.ConnectionConfig{
+		Host:     config.Host,
+		Port:     config.Port,
+		Username: config.Username,
+		Password: config.Password,
+		SSHKey:   config.SSHKey,
+		Timeout:  10 * time.Second,
+	})
 	if err != nil {
 		result.Success = false
 		result.ErrorMessage = fmt.Sprintf("SSH connection failed: %v", err)

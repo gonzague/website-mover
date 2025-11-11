@@ -1,3 +1,6 @@
+// Package scanner provides file system scanning and CMS detection capabilities
+// for website migration. It recursively scans directories, detects CMS platforms,
+// and generates migration strategies.
 package scanner
 
 import (
@@ -9,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gonzague/website-mover/backend/internal/probe"
+	"github.com/gonzague/website-mover/backend/internal/sshutil"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
@@ -61,30 +65,20 @@ func (s *Scanner) Connect() error {
 		return fmt.Errorf("only SFTP scanning is supported currently")
 	}
 
-	// SSH client config
-	config := &ssh.ClientConfig{
-		User: s.config.Username,
-		Auth: []ssh.AuthMethod{
-			ssh.Password(s.config.Password),
-		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         10 * time.Second,
+	// Create SFTP client using shared utility
+	sftpClient, sshClient, err := sshutil.CreateSFTPClient(sshutil.ConnectionConfig{
+		Host:     s.config.Host,
+		Port:     s.config.Port,
+		Username: s.config.Username,
+		Password: s.config.Password,
+		SSHKey:   s.config.SSHKey,
+		Timeout:  10 * time.Second,
+	})
+	if err != nil {
+		return fmt.Errorf("connection failed: %w", err)
 	}
 
-	// Connect SSH
-	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
-	sshClient, err := ssh.Dial("tcp", addr, config)
-	if err != nil {
-		return fmt.Errorf("SSH connection failed: %w", err)
-	}
 	s.sshClient = sshClient
-
-	// Open SFTP session
-	sftpClient, err := sftp.NewClient(sshClient)
-	if err != nil {
-		sshClient.Close()
-		return fmt.Errorf("SFTP session failed: %w", err)
-	}
 	s.sftpClient = sftpClient
 
 	return nil

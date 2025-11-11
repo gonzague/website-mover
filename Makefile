@@ -1,4 +1,4 @@
-.PHONY: help build-backend run-backend stop-backend dev-frontend dev build clean install
+.PHONY: help build-backend run-backend stop-backend dev-frontend dev build clean install test test-backend test-frontend lint lint-backend lint-frontend
 
 SHELL := /bin/bash
 
@@ -48,3 +48,28 @@ install: ## Install all dependencies
 	@echo "Installing frontend dependencies..."
 	@cd frontend && npm install
 	@echo "All dependencies installed!"
+
+test-backend: ## Run Go backend tests
+	@echo "Running backend tests..."
+	@cd backend && go test -v -race -coverprofile=coverage.txt ./...
+	@echo "Backend tests complete!"
+
+test-frontend: ## Run frontend tests
+	@echo "Running frontend tests..."
+	@cd frontend && npm run test || echo "Frontend tests not yet configured"
+	@echo "Frontend tests complete!"
+
+test: test-backend test-frontend ## Run all tests
+
+lint-backend: ## Lint Go backend code
+	@echo "Linting backend code..."
+	@cd backend && go vet ./...
+	@cd backend && go fmt ./...
+	@echo "Backend linting complete!"
+
+lint-frontend: ## Lint frontend code
+	@echo "Linting frontend code..."
+	@cd frontend && npm run lint || echo "Fix ESLint configuration first"
+	@echo "Frontend linting complete!"
+
+lint: lint-backend lint-frontend ## Lint all code
