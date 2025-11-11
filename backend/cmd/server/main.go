@@ -170,29 +170,20 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 
 func scanStreamHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed"); return
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": "Method not allowed. Use POST.",
-		})
+		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 
 	// Parse request
 	var scanReq scanner.ScanRequest
 	if err := json.NewDecoder(r.Body).Decode(&scanReq); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": fmt.Sprintf("Invalid request body: %v", err),
-		})
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %v", err))
 		return
 	}
 
 	// Validate
 	if scanReq.ServerConfig.Host == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": "Server host is required",
-		})
+		writeJSONError(w, http.StatusBadRequest, "Server host is required")
 		return
 	}
 
@@ -241,13 +232,8 @@ func scanStreamHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func planHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
 	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed"); return
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": "Method not allowed. Use POST.",
-		})
+		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 
@@ -287,10 +273,7 @@ func planHandler(w http.ResponseWriter, r *http.Request) {
 
 func transferStreamHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed"); return
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": "Method not allowed. Use POST.",
-		})
+		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 

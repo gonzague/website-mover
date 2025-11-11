@@ -25,6 +25,13 @@ export function useScan({ sourceConfig, onComplete }: UseScanOptions) {
   const abortControllerRef = useRef<AbortController | null>(null)
 
   const startScan = useCallback(async () => {
+    // Prevent multiple concurrent scans
+    if (abortControllerRef.current) {
+      console.warn('Scan already in progress, ignoring duplicate request')
+      return
+    }
+
+    console.log('Starting scan...')
     setScanning(true)
     setError(null)
     setProgress(null)
@@ -112,17 +119,20 @@ export function useScan({ sourceConfig, onComplete }: UseScanOptions) {
       }
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
+        console.log('Scan cancelled')
         setError('Scan cancelled')
       } else {
+        console.error('Scan error:', err)
         setError(err instanceof Error ? err.message : 'Scan failed')
       }
     } finally {
+      console.log('Scan finished')
       setScanning(false)
       abortControllerRef.current = null
     }
   }, [sourceConfig, onComplete])
 
-  const cleanup = useCallback(() => {
+  const cancelScan = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
       abortControllerRef.current = null
@@ -135,6 +145,6 @@ export function useScan({ sourceConfig, onComplete }: UseScanOptions) {
     progress,
     error,
     startScan,
-    cleanup,
+    cancelScan,
   }
 }

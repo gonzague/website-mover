@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { useScan } from '@/hooks/useScan'
 import { usePlan } from '@/hooks/usePlan'
@@ -18,6 +18,8 @@ interface PlanScreenProps {
 }
 
 export function PlanScreen({ source, dest, onBack, onNext }: PlanScreenProps) {
+  const hasStartedScan = useRef(false)
+
   // Use custom hooks for scan and plan logic
   const {
     scanning,
@@ -25,7 +27,7 @@ export function PlanScreen({ source, dest, onBack, onNext }: PlanScreenProps) {
     progress,
     error: scanError,
     startScan,
-    cleanup,
+    cancelScan,
   } = useScan({
     sourceConfig: source.config,
     onComplete: async (result) => {
@@ -48,11 +50,16 @@ export function PlanScreen({ source, dest, onBack, onNext }: PlanScreenProps) {
     destProbe: dest.probe,
   })
 
-  // Auto-start scan when component mounts
+  // Auto-start scan when component mounts (only once)
   useEffect(() => {
-    startScan()
-    return cleanup
-  }, [startScan, cleanup])
+    if (!hasStartedScan.current) {
+      hasStartedScan.current = true
+      startScan()
+    }
+    return () => {
+      cancelScan()
+    }
+  }, [startScan, cancelScan])
 
   const error = scanError || planError
 
