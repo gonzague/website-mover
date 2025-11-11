@@ -10,6 +10,7 @@ import (
 	"github.com/gonzague/website-mover/backend/internal/probe"
 	"github.com/gonzague/website-mover/backend/internal/scanner"
 	"github.com/gonzague/website-mover/backend/internal/transfer"
+	"github.com/gonzague/website-mover/backend/internal/validation"
 )
 
 type HealthResponse struct {
@@ -66,37 +67,21 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func probeHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
 	// Only accept POST requests
 	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed"); return
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": "Method not allowed. Use POST.",
-		})
+		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 
 	// Parse request body
 	var config probe.ConnectionConfig
 	if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": fmt.Sprintf("Invalid request body: %v", err),
-		})
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %v", err))
 		return
 	}
 
-	// Validate required fields
-	if config.Host == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": "Host is required",
-		})
-		return
-	}
+	// Set default ports based on protocol if not specified
 	if config.Port == 0 {
-		// Set default ports based on protocol
 		switch config.Protocol {
 		case probe.ProtocolSFTP, probe.ProtocolSCP:
 			config.Port = 22
@@ -108,11 +93,10 @@ func probeHandler(w http.ResponseWriter, r *http.Request) {
 			config.Port = 22
 		}
 	}
-	if config.Username == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": "Username is required",
-		})
+
+	// Validate configuration
+	if err := validation.ValidateConnectionConfig(&config); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -134,23 +118,21 @@ func probeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func scanHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
 	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed"); return
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": "Method not allowed. Use POST.",
-		})
+		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 
 	// Parse request
 	var scanReq scanner.ScanRequest
 	if err := json.NewDecoder(r.Body).Decode(&scanReq); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": fmt.Sprintf("Invalid request body: %v", err),
-		})
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %v", err))
+		return
+	}
+
+	// Validate request
+	if err := validation.ValidateScanRequest(&scanReq); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
