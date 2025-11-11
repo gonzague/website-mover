@@ -17,6 +17,21 @@ type HealthResponse struct {
 	Version string `json:"version"`
 }
 
+// writeJSON writes a JSON response with proper error handling
+func writeJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		// Log the encoding error but can't change response at this point
+		log.Printf("ERROR: Failed to encode JSON response: %v", err)
+	}
+}
+
+// writeJSONError writes an error response with proper error handling
+func writeJSONError(w http.ResponseWriter, statusCode int, message string) {
+	writeJSON(w, statusCode, map[string]string{"error": message})
+}
+
 func main() {
 	// Get port from environment variable or use default
 	port := os.Getenv("PORT")
@@ -44,8 +59,7 @@ func main() {
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(HealthResponse{
+	writeJSON(w, http.StatusOK, HealthResponse{
 		Status:  "ok",
 		Version: "0.1.0",
 	})
@@ -56,7 +70,7 @@ func probeHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Only accept POST requests
 	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed"); return
 		json.NewEncoder(w).Encode(map[string]string{
 			"error": "Method not allowed. Use POST.",
 		})
@@ -123,7 +137,7 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed"); return
 		json.NewEncoder(w).Encode(map[string]string{
 			"error": "Method not allowed. Use POST.",
 		})
@@ -174,7 +188,7 @@ func scanHandler(w http.ResponseWriter, r *http.Request) {
 
 func scanStreamHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed"); return
 		json.NewEncoder(w).Encode(map[string]string{
 			"error": "Method not allowed. Use POST.",
 		})
@@ -248,7 +262,7 @@ func planHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed"); return
 		json.NewEncoder(w).Encode(map[string]string{
 			"error": "Method not allowed. Use POST.",
 		})
@@ -291,7 +305,7 @@ func planHandler(w http.ResponseWriter, r *http.Request) {
 
 func transferStreamHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed"); return
 		json.NewEncoder(w).Encode(map[string]string{
 			"error": "Method not allowed. Use POST.",
 		})

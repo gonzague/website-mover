@@ -1,3 +1,5 @@
+// Package transfer handles file transfers between servers with support for
+// bandwidth limiting, progress tracking, and verification.
 package transfer
 
 import (
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gonzague/website-mover/backend/internal/scanner"
+	"github.com/gonzague/website-mover/backend/internal/sshutil"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
@@ -171,27 +174,19 @@ func (e *SFTPExecutor) Execute() (*TransferResult, error) {
 
 // connectSource establishes SFTP connection to source
 func (e *SFTPExecutor) connectSource() error {
-	config := &ssh.ClientConfig{
-		User: e.request.SourceConfig.Username,
-		Auth: []ssh.AuthMethod{
-			ssh.Password(e.request.SourceConfig.Password),
-		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         30 * time.Second,
-	}
-
-	addr := fmt.Sprintf("%s:%d", e.request.SourceConfig.Host, e.request.SourceConfig.Port)
-	sshClient, err := ssh.Dial("tcp", addr, config)
+	sftpClient, sshClient, err := sshutil.CreateSFTPClient(sshutil.ConnectionConfig{
+		Host:     e.request.SourceConfig.Host,
+		Port:     e.request.SourceConfig.Port,
+		Username: e.request.SourceConfig.Username,
+		Password: e.request.SourceConfig.Password,
+		SSHKey:   e.request.SourceConfig.SSHKey,
+		Timeout:  30 * time.Second,
+	})
 	if err != nil {
 		return err
 	}
+
 	e.sourceSSH = sshClient
-
-	sftpClient, err := sftp.NewClient(sshClient)
-	if err != nil {
-		sshClient.Close()
-		return err
-	}
 	e.sourceClient = sftpClient
 
 	return nil
@@ -199,27 +194,19 @@ func (e *SFTPExecutor) connectSource() error {
 
 // connectDest establishes SFTP connection to destination
 func (e *SFTPExecutor) connectDest() error {
-	config := &ssh.ClientConfig{
-		User: e.request.DestConfig.Username,
-		Auth: []ssh.AuthMethod{
-			ssh.Password(e.request.DestConfig.Password),
-		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         30 * time.Second,
-	}
-
-	addr := fmt.Sprintf("%s:%d", e.request.DestConfig.Host, e.request.DestConfig.Port)
-	sshClient, err := ssh.Dial("tcp", addr, config)
+	sftpClient, sshClient, err := sshutil.CreateSFTPClient(sshutil.ConnectionConfig{
+		Host:     e.request.DestConfig.Host,
+		Port:     e.request.DestConfig.Port,
+		Username: e.request.DestConfig.Username,
+		Password: e.request.DestConfig.Password,
+		SSHKey:   e.request.DestConfig.SSHKey,
+		Timeout:  30 * time.Second,
+	})
 	if err != nil {
 		return err
 	}
+
 	e.destSSH = sshClient
-
-	sftpClient, err := sftp.NewClient(sshClient)
-	if err != nil {
-		sshClient.Close()
-		return err
-	}
 	e.destClient = sftpClient
 
 	// Create destination root path if it doesn't exist
@@ -310,11 +297,23 @@ func (e *SFTPExecutor) transferFile(file scanner.FileEntry) error {
 		}
 
 		// Apply bandwidth limit
-		if e.request.BandwidthLimit != nil {
-			// Simple throttling - sleep proportionally
-			bytesPerSecond := *e.request.BandwidthLimit * 1024 * 1024
-			sleepTime := time.Duration(float64(n) / float64(bytesPerSecond) * float64(time.Second))
-			time.Sleep(sleepTime)
+		if e.request.BandwidthLimit != nil && *e.request.BandwidthLimit > 0 {
+			// Simple throttling - sleep proportionally to maintain target speed
+			// Convert MB/s to bytes/second with overflow protection
+			limitMBps := *e.request.BandwidthLimit
+			if limitMBps > 10000 { // Sanity check: cap at 10 GB/s
+				limitMBps = 10000
+			}
+			bytesPerSecond := int64(limitMBps) * 1024 * 1024
+
+			// Calculate sleep time with safe arithmetic
+			// sleepTime = (bytes transferred / target bytes per second) * 1 second
+			if bytesPerSecond > 0 && n > 0 {
+				sleepNanos := (int64(n) * int64(time.Second)) / bytesPerSecond
+				if sleepNanos > 0 {
+					time.Sleep(time.Duration(sleepNanos))
+				}
+			}
 		}
 	}
 

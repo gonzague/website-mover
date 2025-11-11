@@ -42,8 +42,34 @@ func ProbeFTP(config ConnectionConfig) (*ProbeResult, error) {
 
 	if config.Protocol == ProtocolFTPS {
 		// FTPS (FTP over TLS)
+		// SECURITY NOTE: This configuration accepts self-signed certificates, which is
+		// necessary for a migration tool that connects to arbitrary hosting providers.
+		// However, we enforce TLS 1.2+ and log certificate information for transparency.
+		// Users should ensure they're on a trusted network when using this tool.
 		tlsConfig := &tls.Config{
-			InsecureSkipVerify: true, // TODO: Add proper certificate verification
+			ServerName: config.Host,
+			MinVersion: tls.VersionTLS12, // Enforce TLS 1.2 or higher
+			// Accept self-signed certificates but log them
+			InsecureSkipVerify: true,
+			VerifyConnection: func(cs tls.ConnectionState) error {
+				// Log certificate information for transparency
+				if len(cs.PeerCertificates) > 0 {
+					cert := cs.PeerCertificates[0]
+					fmt.Printf("INFO: FTPS connection to %s using TLS %s\n",
+						config.Host, tls.VersionName(cs.Version))
+					fmt.Printf("INFO: Certificate Subject=%s, Issuer=%s, Expires=%s\n",
+						cert.Subject.CommonName, cert.Issuer.CommonName, cert.NotAfter.Format("2006-01-02"))
+
+					// Check if certificate is expired
+					now := time.Now()
+					if now.After(cert.NotAfter) {
+						fmt.Printf("WARNING: Certificate for %s has expired!\n", config.Host)
+					} else if now.Before(cert.NotBefore) {
+						fmt.Printf("WARNING: Certificate for %s is not yet valid!\n", config.Host)
+					}
+				}
+				return nil
+			},
 		}
 		ftpClient, err = ftp.Dial(addr,
 			ftp.DialWithTimeout(10*time.Second),

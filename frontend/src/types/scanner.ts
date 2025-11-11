@@ -1,5 +1,7 @@
 // Scanner and planning types matching the Go backend
 
+import type { ConnectionConfig, ProbeResult } from './probe'
+
 export interface FileEntry {
   path: string
   name: string
@@ -69,7 +71,7 @@ export interface ScanResult {
   cms_detection?: CMSDetection
   files?: FileEntry[]
   exclusions: ExclusionPattern[]
-  server_config: any
+  server_config: ConnectionConfig
 }
 
 export type TransferMethod = 'fxp' | 'rsync_ssh' | 'sftp_stream' | 'lftp' | 'scp' | 'rclone' | 'tar_stream'
@@ -93,8 +95,8 @@ export interface PlanResult {
   success: boolean
   error_message?: string
   scan_result?: ScanResult
-  source_probe?: any
-  dest_probe?: any
+  source_probe?: ProbeResult
+  dest_probe?: ProbeResult
   strategies: TransferStrategy[]
   recommended_strategy?: TransferStrategy
   warnings: string[]
@@ -103,7 +105,7 @@ export interface PlanResult {
 }
 
 export interface ScanRequest {
-  server_config: any
+  server_config: ConnectionConfig
   max_depth?: number
   max_files?: number
   follow_symlinks: boolean

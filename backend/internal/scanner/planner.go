@@ -3,6 +3,7 @@ package scanner
 import (
 	"fmt"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/gonzague/website-mover/backend/internal/probe"
@@ -198,14 +199,10 @@ func calculateStrategies(scan *ScanResult, source *probe.ProbeResult, dest *prob
 		strategies = append(strategies, strategy)
 	}
 
-	// Sort by score descending
-	for i := 0; i < len(strategies)-1; i++ {
-		for j := i + 1; j < len(strategies); j++ {
-			if strategies[j].Score > strategies[i].Score {
-				strategies[i], strategies[j] = strategies[j], strategies[i]
-			}
-		}
-	}
+	// Sort by score descending using Go's efficient sort
+	sort.Slice(strategies, func(i, j int) bool {
+		return strategies[i].Score > strategies[j].Score
+	})
 
 	return strategies
 }
