@@ -53,7 +53,7 @@ export function useScan({ sourceConfig, onComplete }: UseScanOptions) {
         },
         body: JSON.stringify({
           server_config: sourceConfig,
-          max_files: 10000,
+          max_files: 0, // 0 = no limit
           follow_symlinks: false,
           detect_cms: true,
           include_hidden: false,

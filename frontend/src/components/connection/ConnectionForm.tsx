@@ -80,7 +80,7 @@ export function ConnectionForm({ title, onTest, loading = false }: ConnectionFor
             <Button
               type="button"
               variant="outline"
-              className="w-full justify-between"
+              className="w-full justify-between text-slate-200 hover:text-white border-slate-600 hover:border-slate-500 hover:bg-slate-700"
               onClick={() => setShowSaved(!showSaved)}
             >
               <span>{showSaved ? 'Hide' : 'Show'} saved connections</span>
@@ -88,26 +88,27 @@ export function ConnectionForm({ title, onTest, loading = false }: ConnectionFor
             </Button>
 
             {showSaved && (
-              <div className="border border-slate-700 rounded-md divide-y divide-slate-700 max-h-64 overflow-y-auto">
+              <div className="border border-slate-600 rounded-md divide-y divide-slate-600 max-h-64 overflow-y-auto bg-slate-800/50">
                 {savedConnections.map((conn) => (
                   <div
                     key={conn.id}
-                    className="p-3 hover:bg-slate-800/50 flex items-center justify-between gap-2"
+                    className="p-3 hover:bg-slate-700/70 flex items-center justify-between gap-2"
                   >
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm truncate">{conn.name}</div>
-                      <div className="text-xs text-slate-400">
+                      <div className="font-semibold text-sm truncate text-slate-100">{conn.name}</div>
+                      <div className="text-xs text-slate-300 mt-0.5">
                         {conn.config.protocol.toUpperCase()} • {conn.config.host}:{conn.config.port}
                       </div>
-                      <div className="text-xs text-slate-500">
+                      <div className="text-xs text-slate-400 mt-0.5">
                         Last used: {new Date(conn.lastUsed).toLocaleDateString()}
                       </div>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-shrink-0">
                       <Button
                         type="button"
                         size="sm"
                         variant="outline"
+                        className="bg-blue-600 hover:bg-blue-700 text-white border-blue-600"
                         onClick={() => handleLoadConnection(conn)}
                       >
                         Load
@@ -116,7 +117,7 @@ export function ConnectionForm({ title, onTest, loading = false }: ConnectionFor
                         type="button"
                         size="sm"
                         variant="outline"
-                        className="text-red-400 hover:text-red-300"
+                        className="bg-red-600 hover:bg-red-700 text-white border-red-600"
                         onClick={() => handleDeleteConnection(conn.id)}
                       >
                         Delete

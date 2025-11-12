@@ -98,7 +98,7 @@ func calculateStrategies(scan *ScanResult, source *probe.ProbeResult, dest *prob
 			Method:            MethodRsyncSSH,
 			Score:             scoreRsync(source, dest, stats),
 			EstimatedTime:     estimateTransferTime(transferableSize, float64(source.Performance.UploadSpeed)*1024*1024),
-			Command:           generateRsyncCommand(sourceConfig, destConfig, source, dest),
+			Command:           generateRsyncCommand(sourceConfig, destConfig, source, dest, scan.Exclusions),
 			CommandExplanation: "Incremental sync with compression",
 			Pros: []string{
 				"Very efficient (only transfers changes)",
@@ -152,7 +152,7 @@ func calculateStrategies(scan *ScanResult, source *probe.ProbeResult, dest *prob
 			Method:            MethodLFTP,
 			Score:             scoreLFTP(source, dest, stats),
 			EstimatedTime:     estimateTransferTime(transferableSize, avgSpeed*1024*1024),
-			Command:           generateLFTPCommand(sourceConfig, destConfig, source, dest),
+			Command:           generateLFTPCommand(sourceConfig, destConfig, source, dest, scan.Exclusions),
 			CommandExplanation: "Mirror with lftp (supports FTP/SFTP)",
 			Pros: []string{
 				"Excellent for FTP/FTPS",
@@ -317,12 +317,12 @@ func scoreTarStream(source, dest *probe.ProbeResult, stats FileStatistics) float
 }
 
 // Time estimation
-func estimateTransferTime(bytes int64, speedMBps float64) time.Duration {
-	if speedMBps <= 0 {
-		speedMBps = 1.0 // Default to 1 MB/s
+func estimateTransferTime(bytes int64, speedBytesPerSec float64) time.Duration {
+	if speedBytesPerSec <= 0 {
+		speedBytesPerSec = 1.0 * 1024 * 1024 // Default to 1 MB/s in bytes
 	}
 
-	seconds := float64(bytes) / (speedMBps * 1024 * 1024)
+	seconds := float64(bytes) / speedBytesPerSec
 	// Add 20% overhead for protocol, retries, etc.
 	seconds *= 1.2
 
@@ -344,15 +344,33 @@ func generateFXPCommand(sourceConfig, destConfig *probe.ConnectionConfig, source
 		destConfig.Protocol, destConfig.Username, destConfig.Host, destConfig.RootPath)
 }
 
-func generateRsyncCommand(sourceConfig, destConfig *probe.ConnectionConfig, source, dest *probe.ProbeResult) string {
-	return fmt.Sprintf("rsync -avz --progress -e ssh %s@%s:%s/ %s@%s:%s/",
+func generateRsyncCommand(sourceConfig, destConfig *probe.ConnectionConfig, source, dest *probe.ProbeResult, exclusions []ExclusionPattern) string {
+	cmd := fmt.Sprintf("rsync -avz --progress -e ssh")
+	
+	// Add exclusions
+	for _, excl := range exclusions {
+		if excl.Enabled {
+			cmd += fmt.Sprintf(" --exclude='%s'", excl.Pattern)
+		}
+	}
+	
+	cmd += fmt.Sprintf(" %s@%s:%s/ %s@%s:%s/",
 		sourceConfig.Username, sourceConfig.Host, sourceConfig.RootPath,
 		destConfig.Username, destConfig.Host, destConfig.RootPath)
+	
+	return cmd
 }
 
-func generateLFTPCommand(sourceConfig, destConfig *probe.ConnectionConfig, source, dest *probe.ProbeResult) string {
-	return fmt.Sprintf("lftp -c 'open %s://%s@%s; mirror --parallel=4 --verbose %s %s://%s@%s:%s'",
-		sourceConfig.Protocol, sourceConfig.Username, sourceConfig.Host, sourceConfig.RootPath,
+func generateLFTPCommand(sourceConfig, destConfig *probe.ConnectionConfig, source, dest *probe.ProbeResult, exclusions []ExclusionPattern) string {
+	excludeArgs := ""
+	for _, excl := range exclusions {
+		if excl.Enabled {
+			excludeArgs += fmt.Sprintf(" --exclude %s", excl.Pattern)
+		}
+	}
+	
+	return fmt.Sprintf("lftp -c 'open %s://%s@%s; mirror --parallel=4 --verbose%s %s %s://%s@%s:%s'",
+		sourceConfig.Protocol, sourceConfig.Username, sourceConfig.Host, excludeArgs, sourceConfig.RootPath,
 		destConfig.Protocol, destConfig.Username, destConfig.Host, destConfig.RootPath)
 }
 

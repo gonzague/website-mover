@@ -91,7 +91,17 @@ func CreateSSHClient(config ConnectionConfig) (*ssh.Client, error) {
 
 	// Connect
 	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
-	return ssh.Dial("tcp", addr, sshConfig)
+	client, err := ssh.Dial("tcp", addr, sshConfig)
+	if err != nil {
+		// Provide more helpful error message for DNS failures
+		if opErr, ok := err.(*net.OpError); ok {
+			if _, ok := opErr.Err.(*net.DNSError); ok {
+				return nil, fmt.Errorf("DNS lookup failed for '%s'. For SFTP, ensure you're using the correct hostname (not the FTP hostname). Original error: %w", config.Host, err)
+			}
+		}
+		return nil, fmt.Errorf("connection failed to %s: %w", addr, err)
+	}
+	return client, nil
 }
 
 // CreateSFTPClient creates an SFTP client with the given configuration
