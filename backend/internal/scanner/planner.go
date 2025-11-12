@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"time"
@@ -18,6 +19,12 @@ func GeneratePlan(scanResult *ScanResult, sourceProbe *probe.ProbeResult, destPr
 		}
 	}
 
+	log.Printf("Generating migration plan...")
+	log.Printf("  Total files: %d, Total size: %s", scanResult.Statistics.TotalFiles, scanResult.Statistics.TotalSizeHuman)
+	log.Printf("  Excluded: %d files (%d bytes)", scanResult.Statistics.ExcludedCount, scanResult.Statistics.ExcludedSize)
+	log.Printf("  Source upload speed: %.2f MB/s, download: %.2f MB/s", sourceProbe.Performance.UploadSpeed, sourceProbe.Performance.DownloadSpeed)
+	log.Printf("  Dest upload speed: %.2f MB/s, download: %.2f MB/s", destProbe.Performance.UploadSpeed, destProbe.Performance.DownloadSpeed)
+
 	// Calculate all possible strategies
 	strategies := calculateStrategies(scanResult, sourceProbe, destProbe, sourceConfig, destConfig)
 
@@ -33,10 +40,14 @@ func GeneratePlan(scanResult *ScanResult, sourceProbe *probe.ProbeResult, destPr
 
 	if recommended != nil {
 		recommended.IsRecommended = true
+		log.Printf("Recommended strategy: %s (score: %.0f, ETA: %s)", recommended.Method, recommended.Score, recommended.EstimatedTimeStr)
 	}
 
 	// Generate warnings
 	warnings := generateWarnings(scanResult, sourceProbe, destProbe)
+	if len(warnings) > 0 {
+		log.Printf("Generated %d warnings", len(warnings))
+	}
 
 	// Calculate total estimated time
 	totalTime := recommended.EstimatedTime
@@ -72,7 +83,7 @@ func calculateStrategies(scan *ScanResult, source *probe.ProbeResult, dest *prob
 		strategy := TransferStrategy{
 			Method:            MethodFXP,
 			Score:             scoreFXP(source, dest, stats),
-			EstimatedTime:     estimateTransferTime(transferableSize, 10*1024*1024), // 10 MB/s typical
+			EstimatedTime:     estimateTransferTime(transferableSize, 10.0), // 10 MB/s typical
 			Command:           generateFXPCommand(sourceConfig, destConfig, source, dest),
 			CommandExplanation: "Direct server-to-server FTP transfer (fastest)",
 			Pros: []string{
@@ -97,7 +108,7 @@ func calculateStrategies(scan *ScanResult, source *probe.ProbeResult, dest *prob
 		strategy := TransferStrategy{
 			Method:            MethodRsyncSSH,
 			Score:             scoreRsync(source, dest, stats),
-			EstimatedTime:     estimateTransferTime(transferableSize, float64(source.Performance.UploadSpeed)*1024*1024),
+			EstimatedTime:     estimateTransferTime(transferableSize, source.Performance.UploadSpeed),
 			Command:           generateRsyncCommand(sourceConfig, destConfig, source, dest, scan.Exclusions),
 			CommandExplanation: "Incremental sync with compression",
 			Pros: []string{
@@ -124,7 +135,7 @@ func calculateStrategies(scan *ScanResult, source *probe.ProbeResult, dest *prob
 		strategy := TransferStrategy{
 			Method:            MethodSFTPStream,
 			Score:             scoreSFTPStream(source, dest, stats),
-			EstimatedTime:     estimateTransferTime(transferableSize, avgSpeed*1024*1024),
+			EstimatedTime:     estimateTransferTime(transferableSize, avgSpeed),
 			Command:           "Custom SFTP streaming implementation",
 			CommandExplanation: "Direct SFTP file-by-file transfer",
 			Pros: []string{
@@ -151,7 +162,7 @@ func calculateStrategies(scan *ScanResult, source *probe.ProbeResult, dest *prob
 		strategy := TransferStrategy{
 			Method:            MethodLFTP,
 			Score:             scoreLFTP(source, dest, stats),
-			EstimatedTime:     estimateTransferTime(transferableSize, avgSpeed*1024*1024),
+			EstimatedTime:     estimateTransferTime(transferableSize, avgSpeed),
 			Command:           generateLFTPCommand(sourceConfig, destConfig, source, dest, scan.Exclusions),
 			CommandExplanation: "Mirror with lftp (supports FTP/SFTP)",
 			Pros: []string{
@@ -177,7 +188,7 @@ func calculateStrategies(scan *ScanResult, source *probe.ProbeResult, dest *prob
 		strategy := TransferStrategy{
 			Method:            MethodTarStream,
 			Score:             scoreTarStream(source, dest, stats),
-			EstimatedTime:     estimateTransferTime(transferableSize, float64(source.Performance.UploadSpeed)*1024*1024*1.5), // Compression helps
+			EstimatedTime:     estimateTransferTime(transferableSize, source.Performance.UploadSpeed*1.5), // Compression helps
 			Command:           generateTarStreamCommand(sourceConfig, destConfig, source, dest),
 			CommandExplanation: "Streaming tar archive over SSH",
 			Pros: []string{
@@ -316,17 +327,24 @@ func scoreTarStream(source, dest *probe.ProbeResult, stats FileStatistics) float
 	return math.Max(score, 50.0)
 }
 
-// Time estimation
-func estimateTransferTime(bytes int64, speedBytesPerSec float64) time.Duration {
-	if speedBytesPerSec <= 0 {
-		speedBytesPerSec = 1.0 * 1024 * 1024 // Default to 1 MB/s in bytes
+// Time estimation - takes MB/s and converts internally
+func estimateTransferTime(bytes int64, speedMBps float64) time.Duration {
+	if speedMBps <= 0 {
+		speedMBps = 1.0 // Default to 1 MB/s
 	}
 
+	// Convert to bytes per second
+	speedBytesPerSec := speedMBps * 1024 * 1024
+	
 	seconds := float64(bytes) / speedBytesPerSec
 	// Add 20% overhead for protocol, retries, etc.
 	seconds *= 1.2
 
-	return time.Duration(seconds) * time.Second
+	duration := time.Duration(seconds) * time.Second
+	
+	log.Printf("  ETA calculation: %d bytes at %.2f MB/s = %s", bytes, speedMBps, duration)
+	
+	return duration
 }
 
 func estimateDatabaseTime(websiteSize int64) time.Duration {

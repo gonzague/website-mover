@@ -138,3 +138,66 @@ export function clearAllConnections(): void {
   localStorage.removeItem(CONNECTIONS_KEY)
   localStorage.removeItem(RECENT_CONNECTIONS_KEY)
 }
+
+// Session state persistence
+const SESSION_STATE_KEY = `${STORAGE_KEY_PREFIX}session`
+
+export interface SessionState {
+  currentScreen: string
+  sourceServer: any | null
+  destServer: any | null
+  scanResult: any | null
+  planResult: any | null
+  transferConfig: any | null
+  timestamp: string
+}
+
+/**
+ * Save the current session state
+ */
+export function saveSessionState(state: Omit<SessionState, 'timestamp'>): void {
+  try {
+    const sessionState: SessionState = {
+      ...state,
+      timestamp: new Date().toISOString(),
+    }
+    localStorage.setItem(SESSION_STATE_KEY, JSON.stringify(sessionState))
+  } catch (error) {
+    console.error('Failed to save session state:', error)
+  }
+}
+
+/**
+ * Load the session state (returns null if expired or not found)
+ */
+export function loadSessionState(): SessionState | null {
+  try {
+    const data = localStorage.getItem(SESSION_STATE_KEY)
+    if (!data) return null
+
+    const state: SessionState = JSON.parse(data)
+    
+    // Check if state is less than 24 hours old
+    const timestamp = new Date(state.timestamp)
+    const now = new Date()
+    const hoursSinceLastSave = (now.getTime() - timestamp.getTime()) / (1000 * 60 * 60)
+    
+    if (hoursSinceLastSave > 24) {
+      // State is too old, clear it
+      clearSessionState()
+      return null
+    }
+    
+    return state
+  } catch (error) {
+    console.error('Failed to load session state:', error)
+    return null
+  }
+}
+
+/**
+ * Clear the session state
+ */
+export function clearSessionState(): void {
+  localStorage.removeItem(SESSION_STATE_KEY)
+}

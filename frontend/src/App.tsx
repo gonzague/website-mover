@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { ConnectionsScreen } from '@/components/screens/ConnectionsScreen'
 import { PlanScreen } from '@/components/screens/PlanScreen'
 import { TransferConfigScreen, type TransferConfig } from '@/components/screens/TransferConfigScreen'
 import { TransferExecutionScreen } from '@/components/screens/TransferExecutionScreen'
 import type { ConnectionConfig, ProbeResult } from '@/types/probe'
 import type { ScanResult, PlanResult } from '@/types/scanner'
+import { saveSessionState, loadSessionState, clearSessionState } from '@/lib/storage'
 
 type Screen = 'connections' | 'plan' | 'transfer-config' | 'transfer-execution'
 
@@ -20,6 +21,37 @@ function App() {
   const [scanResult, setScanResult] = useState<ScanResult | null>(null)
   const [planResult, setPlanResult] = useState<PlanResult | null>(null)
   const [transferConfig, setTransferConfig] = useState<TransferConfig | null>(null)
+
+  // Load session state on mount
+  useEffect(() => {
+    const savedState = loadSessionState()
+    if (savedState) {
+      console.log('Restoring session state from', new Date(savedState.timestamp))
+      setCurrentScreen(savedState.currentScreen as Screen)
+      setSourceServer(savedState.sourceServer)
+      setDestServer(savedState.destServer)
+      setScanResult(savedState.scanResult)
+      setPlanResult(savedState.planResult)
+      setTransferConfig(savedState.transferConfig)
+    }
+  }, [])
+
+  // Save session state whenever it changes
+  useEffect(() => {
+    // Don't save if we're on the connections screen with no data
+    if (currentScreen === 'connections' && !sourceServer && !destServer) {
+      return
+    }
+
+    saveSessionState({
+      currentScreen,
+      sourceServer,
+      destServer,
+      scanResult,
+      planResult,
+      transferConfig,
+    })
+  }, [currentScreen, sourceServer, destServer, scanResult, planResult, transferConfig])
 
   const handleConnectionsNext = (source: ServerData, dest: ServerData) => {
     setSourceServer(source)
@@ -52,7 +84,13 @@ function App() {
 
   const handleTransferComplete = () => {
     // Reset and go back to connections
+    clearSessionState()
     setCurrentScreen('connections')
+    setSourceServer(null)
+    setDestServer(null)
+    setScanResult(null)
+    setPlanResult(null)
+    setTransferConfig(null)
   }
 
   return (
