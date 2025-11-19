@@ -5,12 +5,21 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { Checkbox } from '../ui/checkbox';
+import { toast } from '../../hooks/use-toast';
+import { FileBrowserDialog } from './FileBrowserDialog';
+import { FolderOpen } from 'lucide-react';
 
 export default function MigrationScreen() {
   const [remotes, setRemotes] = useState<Remote[]>([]);
   const [loading, setLoading] = useState(true);
   const outputEndRef = useRef<HTMLDivElement>(null);
-  
+
+  // File Browser State
+  const [browserOpen, setBrowserOpen] = useState(false);
+  const [browserMode, setBrowserMode] = useState<'source' | 'dest' | null>(null);
+
   // Migration options
   const [options, setOptions] = useState<MigrationOptions>({
     source_remote: '',
@@ -37,6 +46,11 @@ export default function MigrationScreen() {
   const [command, setCommand] = useState<string>('');
   const [output, setOutput] = useState<string[]>([]);
   const [status, setStatus] = useState<string>('');
+  const [liveStats, setLiveStats] = useState<{
+    total_bytes: number;
+    total_files: number;
+    transfer_speed: string;
+  } | null>(null);
 
   useEffect(() => {
     loadRemotes();
@@ -54,6 +68,11 @@ export default function MigrationScreen() {
       setRemotes(data);
     } catch (error) {
       console.error('Failed to load remotes:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load remotes",
+        type: "error"
+      });
     } finally {
       setLoading(false);
     }
@@ -61,12 +80,17 @@ export default function MigrationScreen() {
 
   const handleStartMigration = async () => {
     if (!options.source_remote || !options.dest_remote) {
-      alert('Please select source and destination remotes');
+      toast({
+        title: "Validation Error",
+        description: "Please select source and destination remotes",
+        type: "error"
+      });
       return;
     }
 
     setExecuting(true);
     setOutput([]);
+    setLiveStats(null);
     setStatus('starting');
 
     try {
@@ -74,6 +98,12 @@ export default function MigrationScreen() {
       setJobId(job.job_id);
       setCommand(job.command);
       setStatus(job.status);
+
+      toast({
+        title: "Migration Started",
+        description: "Migration job has been initiated",
+        type: "success"
+      });
 
       // Stream output
       streamMigrationOutput(
@@ -88,19 +118,58 @@ export default function MigrationScreen() {
             return newOutput;
           });
         },
+        (stats) => {
+          setLiveStats(stats);
+        },
         (finalStatus) => {
           setStatus(finalStatus);
           setExecuting(false);
+          toast({
+            title: "Migration Completed",
+            description: `Status: ${finalStatus}`,
+            type: finalStatus === 'completed' ? 'success' : 'error'
+          });
         },
         (error) => {
           console.error('Stream error:', error);
           setStatus('error');
           setExecuting(false);
+          toast({
+            title: "Stream Error",
+            description: "Connection to migration stream lost",
+            type: "error"
+          });
         }
       );
     } catch (error) {
-      alert(`Failed to start migration: ${error}`);
+      toast({
+        title: "Error",
+        description: `Failed to start migration: ${error}`,
+        type: "error"
+      });
       setExecuting(false);
+    }
+  };
+
+  const openBrowser = (mode: 'source' | 'dest') => {
+    const remote = mode === 'source' ? options.source_remote : options.dest_remote;
+    if (!remote) {
+      toast({
+        title: "Select Remote",
+        description: "Please select a remote first",
+        type: "warning"
+      });
+      return;
+    }
+    setBrowserMode(mode);
+    setBrowserOpen(true);
+  };
+
+  const handleBrowserSelect = (path: string) => {
+    if (browserMode === 'source') {
+      setOptions({ ...options, source_path: path });
+    } else {
+      setOptions({ ...options, dest_path: path });
     }
   };
 
@@ -162,30 +231,42 @@ export default function MigrationScreen() {
             <div>
               <h3 className="text-lg font-semibold mb-3">Source</h3>
               <div className="grid grid-cols-2 gap-4">
-                <div>
+                <div className="space-y-2">
                   <Label htmlFor="source_remote">Remote</Label>
-                  <select
-                    id="source_remote"
+                  <Select
                     value={options.source_remote}
-                    onChange={(e) => setOptions({ ...options, source_remote: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    onValueChange={(value) => setOptions({ ...options, source_remote: value })}
                   >
-                    <option value="">Select remote...</option>
-                    {remotes.map((r) => (
-                      <option key={r.name} value={r.name}>
-                        {r.name} ({r.host})
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger id="source_remote">
+                      <SelectValue placeholder="Select remote..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {remotes.map((r) => (
+                        <SelectItem key={r.name} value={r.name}>
+                          {r.name} ({r.host})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-                <div>
+                <div className="space-y-2">
                   <Label htmlFor="source_path">Path</Label>
-                  <Input
-                    id="source_path"
-                    value={options.source_path}
-                    onChange={(e) => setOptions({ ...options, source_path: e.target.value })}
-                    placeholder="/"
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      id="source_path"
+                      value={options.source_path}
+                      onChange={(e) => setOptions({ ...options, source_path: e.target.value })}
+                      placeholder="/"
+                    />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => openBrowser('source')}
+                      title="Browse"
+                    >
+                      <FolderOpen className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -194,30 +275,42 @@ export default function MigrationScreen() {
             <div>
               <h3 className="text-lg font-semibold mb-3">Destination</h3>
               <div className="grid grid-cols-2 gap-4">
-                <div>
+                <div className="space-y-2">
                   <Label htmlFor="dest_remote">Remote</Label>
-                  <select
-                    id="dest_remote"
+                  <Select
                     value={options.dest_remote}
-                    onChange={(e) => setOptions({ ...options, dest_remote: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    onValueChange={(value) => setOptions({ ...options, dest_remote: value })}
                   >
-                    <option value="">Select remote...</option>
-                    {remotes.map((r) => (
-                      <option key={r.name} value={r.name}>
-                        {r.name} ({r.host})
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger id="dest_remote">
+                      <SelectValue placeholder="Select remote..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {remotes.map((r) => (
+                        <SelectItem key={r.name} value={r.name}>
+                          {r.name} ({r.host})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-                <div>
+                <div className="space-y-2">
                   <Label htmlFor="dest_path">Path</Label>
-                  <Input
-                    id="dest_path"
-                    value={options.dest_path}
-                    onChange={(e) => setOptions({ ...options, dest_path: e.target.value })}
-                    placeholder="/"
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      id="dest_path"
+                      value={options.dest_path}
+                      onChange={(e) => setOptions({ ...options, dest_path: e.target.value })}
+                      placeholder="/"
+                    />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => openBrowser('dest')}
+                      title="Browse"
+                    >
+                      <FolderOpen className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -226,7 +319,7 @@ export default function MigrationScreen() {
             <div>
               <h3 className="text-lg font-semibold mb-3">Options</h3>
               <div className="grid grid-cols-3 gap-4">
-                <div>
+                <div className="space-y-2">
                   <Label htmlFor="transfers">Transfers</Label>
                   <Input
                     id="transfers"
@@ -235,7 +328,7 @@ export default function MigrationScreen() {
                     onChange={(e) => setOptions({ ...options, transfers: parseInt(e.target.value) })}
                   />
                 </div>
-                <div>
+                <div className="space-y-2">
                   <Label htmlFor="checkers">Checkers</Label>
                   <Input
                     id="checkers"
@@ -244,7 +337,7 @@ export default function MigrationScreen() {
                     onChange={(e) => setOptions({ ...options, checkers: parseInt(e.target.value) })}
                   />
                 </div>
-                <div>
+                <div className="space-y-2">
                   <Label htmlFor="bandwidth">Bandwidth Limit</Label>
                   <Input
                     id="bandwidth"
@@ -255,25 +348,23 @@ export default function MigrationScreen() {
                 </div>
               </div>
 
-              <div className="mt-4 space-y-2">
-                <label className="flex items-center">
-                  <input
-                    type="checkbox"
+              <div className="mt-4 space-y-4">
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="dry_run"
                     checked={options.dry_run}
-                    onChange={(e) => setOptions({ ...options, dry_run: e.target.checked })}
-                    className="mr-2"
+                    onCheckedChange={(checked) => setOptions({ ...options, dry_run: checked as boolean })}
                   />
-                  <span>Dry run (don't actually transfer files)</span>
-                </label>
-                <label className="flex items-center">
-                  <input
-                    type="checkbox"
+                  <Label htmlFor="dry_run">Dry run (don't actually transfer files)</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="delete_extraneous"
                     checked={options.delete_extraneous}
-                    onChange={(e) => setOptions({ ...options, delete_extraneous: e.target.checked })}
-                    className="mr-2"
+                    onCheckedChange={(checked) => setOptions({ ...options, delete_extraneous: checked as boolean })}
                   />
-                  <span>Delete extraneous files (use sync instead of copy)</span>
-                </label>
+                  <Label htmlFor="delete_extraneous">Delete extraneous files (use sync instead of copy)</Label>
+                </div>
               </div>
             </div>
 
@@ -296,10 +387,11 @@ export default function MigrationScreen() {
                     <Button
                       type="button"
                       variant="outline"
-                      size="sm"
+                      size="icon"
                       onClick={() => removeExclude(index)}
                     >
-                      Remove
+                      <span className="sr-only">Remove</span>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
                     </Button>
                   </div>
                 ))}
@@ -326,10 +418,37 @@ export default function MigrationScreen() {
             {/* Command */}
             <div className="mb-4">
               <Label>Command</Label>
-              <div className="bg-gray-100 p-3 rounded font-mono text-sm overflow-x-auto">
+              <div className="bg-gray-100 p-3 rounded font-mono text-sm overflow-x-auto mt-1">
                 {command}
               </div>
             </div>
+
+            {/* Live Stats */}
+            {liveStats && (
+              <div className="mb-6">
+                <h4 className="font-semibold mb-2">Live Statistics</h4>
+                <div className="grid grid-cols-3 gap-4 bg-muted p-4 rounded-md">
+                  <div>
+                    <div className="text-sm font-medium text-muted-foreground">Transferred</div>
+                    <div className="text-2xl font-bold">
+                      {formatBytes(liveStats.total_bytes)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium text-muted-foreground">Files</div>
+                    <div className="text-2xl font-bold">
+                      {liveStats.total_files}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium text-muted-foreground">Speed</div>
+                    <div className="text-2xl font-bold text-green-500">
+                      {liveStats.transfer_speed}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Output */}
             <div>
@@ -362,6 +481,7 @@ export default function MigrationScreen() {
                   setOutput([]);
                   setCommand('');
                   setStatus('');
+                  setLiveStats(null);
                 }}
                 className="w-full mt-4"
               >
@@ -371,7 +491,23 @@ export default function MigrationScreen() {
           </CardContent>
         </Card>
       )}
+
+      <FileBrowserDialog
+        open={browserOpen}
+        onOpenChange={setBrowserOpen}
+        remoteName={browserMode === 'source' ? options.source_remote : options.dest_remote}
+        initialPath={browserMode === 'source' ? options.source_path : options.dest_path}
+        onSelect={handleBrowserSelect}
+        title={browserMode === 'source' ? "Select Source Folder" : "Select Destination Folder"}
+      />
     </div>
   );
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}

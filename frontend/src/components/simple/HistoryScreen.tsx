@@ -1,15 +1,18 @@
 import { useState, useEffect } from 'react';
-import { listHistory, getHistory } from '../../api/rclone';
+import { listHistory, getHistory, clearHistory } from '../../api/rclone';
 import type { MigrationHistory } from '../../api/rclone';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
+import { toast } from '../../hooks/use-toast';
+import { ConfirmationDialog } from '../ui/confirmation-dialog';
 
 export default function HistoryScreen() {
   const [history, setHistory] = useState<MigrationHistory[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedHistory, setSelectedHistory] = useState<MigrationHistory | null>(null);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   useEffect(() => {
     loadHistory();
@@ -22,18 +25,53 @@ export default function HistoryScreen() {
       setHistory(data);
     } catch (error) {
       console.error('Failed to load history:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load history",
+        type: "error"
+      });
     } finally {
       setLoading(false);
     }
   };
 
   const handleViewDetails = async (id: string) => {
+    if (selectedId === id) {
+      setSelectedId(null);
+      setSelectedHistory(null);
+      return;
+    }
+
     setSelectedId(id);
     try {
       const details = await getHistory(id);
       setSelectedHistory(details);
     } catch (error) {
       console.error('Failed to load history details:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load details",
+        type: "error"
+      });
+    }
+  };
+
+  const handleClearHistory = async () => {
+    try {
+      await clearHistory();
+      await loadHistory();
+      toast({
+        title: "Success",
+        description: "History cleared successfully",
+        type: "success"
+      });
+    } catch (error) {
+      console.error('Failed to clear history:', error);
+      toast({
+        title: "Error",
+        description: `Failed to clear history: ${error}`,
+        type: "error"
+      });
     }
   };
 
@@ -47,9 +85,19 @@ export default function HistoryScreen() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">Migration History</h2>
-        <p className="text-gray-600">View past migrations and their results</p>
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-2xl font-bold">Migration History</h2>
+          <p className="text-gray-600">View past migrations and their results</p>
+        </div>
+        {history.length > 0 && (
+          <Button
+            variant="destructive"
+            onClick={() => setShowClearConfirm(true)}
+          >
+            Clear History
+          </Button>
+        )}
       </div>
 
       {history.length === 0 ? (
@@ -102,6 +150,33 @@ export default function HistoryScreen() {
 
               {selectedId === item.id && selectedHistory && (
                 <CardContent className="space-y-4 border-t pt-4">
+                  {/* Stats */}
+                  {(selectedHistory.total_bytes !== undefined || selectedHistory.total_files !== undefined) && (
+                    <div>
+                      <h4 className="font-semibold mb-2">Statistics</h4>
+                      <div className="grid grid-cols-3 gap-4 bg-muted p-4 rounded-md">
+                        <div>
+                          <div className="text-sm font-medium text-muted-foreground">Total Size</div>
+                          <div className="text-lg font-bold">
+                            {selectedHistory.total_bytes ? formatBytes(selectedHistory.total_bytes) : 'N/A'}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-sm font-medium text-muted-foreground">Files</div>
+                          <div className="text-lg font-bold">
+                            {selectedHistory.total_files !== undefined ? selectedHistory.total_files : 'N/A'}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-sm font-medium text-muted-foreground">Speed</div>
+                          <div className="text-lg font-bold">
+                            {selectedHistory.transfer_speed || 'N/A'}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Command */}
                   <div>
                     <h4 className="font-semibold mb-2">Command</h4>
@@ -160,7 +235,24 @@ export default function HistoryScreen() {
           ))}
         </div>
       )}
+
+      <ConfirmationDialog
+        open={showClearConfirm}
+        onOpenChange={setShowClearConfirm}
+        title="Clear History"
+        description="Are you sure you want to clear all migration history? This action cannot be undone."
+        onConfirm={handleClearHistory}
+        confirmText="Clear History"
+        variant="destructive"
+      />
     </div>
   );
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}

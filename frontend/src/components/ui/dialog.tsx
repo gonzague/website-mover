@@ -13,7 +13,7 @@ export function Dialog({ open, onOpenChange, children }: DialogProps) {
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+        className="fixed inset-0 bg-background/80 backdrop-blur-sm"
         onClick={() => onOpenChange(false)}
       />
       {/* Content */}
@@ -29,7 +29,7 @@ interface DialogContentProps {
 
 export function DialogContent({ children, className }: DialogContentProps) {
   return (
-    <div className={`bg-white rounded-lg shadow-xl ${className || ""}`}>
+    <div className={`bg-card text-card-foreground rounded-lg border shadow-xl ${className || ""}`}>
       {children}
     </div>
   )
@@ -49,7 +49,7 @@ interface DialogTitleProps {
 }
 
 export function DialogTitle({ children, className }: DialogTitleProps) {
-  return <h2 className={`text-2xl font-semibold ${className || ""}`}>{children}</h2>
+  return <h2 className={`text-lg font-semibold ${className || ""}`}>{children}</h2>
 }
 
 interface DialogDescriptionProps {
@@ -58,6 +58,14 @@ interface DialogDescriptionProps {
 }
 
 export function DialogDescription({ children, className }: DialogDescriptionProps) {
-  return <p className={`mt-2 text-sm ${className || ""}`}>{children}</p>
+  return <p className={`mt-2 text-sm text-muted-foreground ${className || ""}`}>{children}</p>
 }
 
+interface DialogFooterProps {
+  children: React.ReactNode
+  className?: string
+}
+
+export function DialogFooter({ children, className }: DialogFooterProps) {
+  return <div className={`flex justify-end gap-2 p-6 pt-0 ${className || ""}`}>{children}</div>
+}

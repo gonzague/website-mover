@@ -19,6 +19,11 @@ type MigrationHistory struct {
 	Duration  string           `json:"duration"`
 	Status    string           `json:"status"`
 	Output    []string         `json:"output,omitempty"`
+	
+	// Stats
+	TotalBytes    int64  `json:"total_bytes"`
+	TotalFiles    int64  `json:"total_files"`
+	TransferSpeed string `json:"transfer_speed"`
 }
 
 // HistoryStore manages migration history
@@ -69,6 +74,11 @@ func (hs *HistoryStore) Add(job *MigrationJob, endTime time.Time) error {
 		Duration:  endTime.Sub(job.StartTime).Round(time.Second).String(),
 		Status:    job.Status,
 		Output:    job.GetOutput(),
+		
+		// Stats
+		TotalBytes:    job.Stats.TotalBytes,
+		TotalFiles:    job.Stats.TotalFiles,
+		TransferSpeed: job.Stats.TransferSpeed,
 	}
 
 	// Read existing history
@@ -147,5 +157,13 @@ func (hs *HistoryStore) saveHistory(histories []MigrationHistory) error {
 	}
 
 	return os.WriteFile(hs.historyFile, data, 0644)
+}
+
+// Clear clears all migration history
+func (hs *HistoryStore) Clear() error {
+	hs.mux.Lock()
+	defer hs.mux.Unlock()
+
+	return hs.saveHistory([]MigrationHistory{})
 }
 

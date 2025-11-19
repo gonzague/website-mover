@@ -54,6 +54,7 @@ func main() {
 	router.HandleFunc("/api/remotes", server.handleAddRemote).Methods("POST")
 	router.HandleFunc("/api/remotes/{name}", server.handleDeleteRemote).Methods("DELETE")
 	router.HandleFunc("/api/remotes/test", server.handleTestRemote).Methods("POST")
+	router.HandleFunc("/api/remotes/{name}/list", server.handleListPath).Methods("GET")
 	
 	// Migration endpoints
 	router.HandleFunc("/api/migrations", server.handleStartMigration).Methods("POST")
@@ -63,6 +64,7 @@ func main() {
 	
 	// History endpoints
 	router.HandleFunc("/api/history", server.handleListHistory).Methods("GET")
+	router.HandleFunc("/api/history", server.handleClearHistory).Methods("DELETE")
 	router.HandleFunc("/api/history/{id}", server.handleGetHistory).Methods("GET")
 
 	// CORS
@@ -157,6 +159,30 @@ func (s *Server) handleTestRemote(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
+// handleListPath lists files in a remote path
+func (s *Server) handleListPath(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	remoteName := vars["name"]
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		path = "" // Root
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	items, err := s.executor.ListPath(ctx, remoteName, path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"items": items,
+	})
+}
+
 // handleStartMigration starts a new migration
 func (s *Server) handleStartMigration(w http.ResponseWriter, r *http.Request) {
 	var opts rclone.MigrationOptions
@@ -244,7 +270,7 @@ func (s *Server) handleStreamMigration(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
-		case line, ok := <-ch:
+		case event, ok := <-ch:
 			if !ok {
 				// Channel closed, job completed
 				fmt.Fprintf(w, "data: {\"type\":\"complete\",\"status\":\"%s\"}\n\n", job.Status)
@@ -252,11 +278,8 @@ func (s *Server) handleStreamMigration(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			
-			// Send line
-			data, _ := json.Marshal(map[string]string{
-				"type": "output",
-				"line": line,
-			})
+			// Send event
+			data, _ := json.Marshal(event)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}
@@ -325,6 +348,20 @@ func (s *Server) handleListHistory(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"history": history,
+	})
+}
+
+// handleClearHistory clears all migration history
+func (s *Server) handleClearHistory(w http.ResponseWriter, r *http.Request) {
+	if err := s.historyStore.Clear(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "History cleared",
 	})
 }
 

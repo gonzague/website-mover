@@ -5,12 +5,20 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { toast } from '../../hooks/use-toast';
+import { ConfirmationDialog } from '../ui/confirmation-dialog';
 
 export default function RemotesScreen() {
   const [remotes, setRemotes] = useState<Remote[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [editingRemote, setEditingRemote] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
+  const [testPaths, setTestPaths] = useState<Record<string, string>>({});
+
+  // Confirmation Dialog State
+  const [remoteToDelete, setRemoteToDelete] = useState<string | null>(null);
 
   // Form state
   const [formData, setFormData] = useState<Remote>({
@@ -34,9 +42,28 @@ export default function RemotesScreen() {
       setRemotes(data);
     } catch (error) {
       console.error('Failed to load remotes:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load remotes",
+        type: "error"
+      });
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleEditRemote = (remote: Remote) => {
+    setFormData({
+      name: remote.name,
+      type: remote.type,
+      host: remote.host,
+      user: remote.user,
+      password: '', // Don't fill password for security, user must re-enter if changing
+      port: remote.port,
+      key_file: remote.key_file || '',
+    });
+    setEditingRemote(remote.name);
+    setShowAddForm(true);
   };
 
   const handleAddRemote = async (e: React.FormEvent) => {
@@ -45,6 +72,7 @@ export default function RemotesScreen() {
       await addRemote(formData);
       await loadRemotes();
       setShowAddForm(false);
+      setEditingRemote(null);
       setFormData({
         name: '',
         type: 'sftp',
@@ -54,33 +82,92 @@ export default function RemotesScreen() {
         port: 22,
         key_file: '',
       });
+      toast({
+        title: "Success",
+        description: `Remote ${editingRemote ? 'updated' : 'added'} successfully`,
+        type: "success"
+      });
     } catch (error) {
-      alert(`Failed to add remote: ${error}`);
+      toast({
+        title: "Error",
+        description: `Failed to save remote: ${error}`,
+        type: "error"
+      });
     }
   };
 
-  const handleDeleteRemote = async (name: string) => {
-    if (!confirm(`Delete remote "${name}"?`)) return;
-    
+  const handleCancelEdit = () => {
+    setShowAddForm(false);
+    setEditingRemote(null);
+    setFormData({
+      name: '',
+      type: 'sftp',
+      host: '',
+      user: '',
+      password: '',
+      port: 22,
+      key_file: '',
+    });
+  };
+
+  const confirmDelete = (name: string) => {
+    setRemoteToDelete(name);
+  };
+
+  const handleDeleteRemote = async () => {
+    if (!remoteToDelete) return;
+
     try {
-      await deleteRemote(name);
+      await deleteRemote(remoteToDelete);
       await loadRemotes();
+      toast({
+        title: "Success",
+        description: `Remote ${remoteToDelete} deleted`,
+        type: "success"
+      });
     } catch (error) {
-      alert(`Failed to delete remote: ${error}`);
+      toast({
+        title: "Error",
+        description: `Failed to delete remote: ${error}`,
+        type: "error"
+      });
+    } finally {
+      setRemoteToDelete(null);
     }
   };
 
-  const handleTestRemote = async (remote: Remote) => {
-    setTestResults(prev => ({ ...prev, [remote.name]: { success: false, message: 'Testing...' } }));
-    
+  const handleTestRemote = async (remoteName: string) => {
+    setTestResults(prev => ({ ...prev, [remoteName]: { success: false, message: 'Testing...' } }));
+
+    // Use user specified path or default to empty string (home directory)
+    const path = testPaths[remoteName] !== undefined ? testPaths[remoteName] : '';
+
     try {
-      const result = await testRemote(remote.name, '/');
-      setTestResults(prev => ({ ...prev, [remote.name]: result }));
+      const result = await testRemote(remoteName, path);
+      setTestResults(prev => ({ ...prev, [remoteName]: result }));
+      if (result.success) {
+        toast({
+          title: "Connection Successful",
+          description: `Connected to ${remoteName}`,
+          type: "success"
+        });
+      } else {
+        toast({
+          title: "Connection Failed",
+          description: result.message,
+          type: "error"
+        });
+      }
     } catch (error) {
       setTestResults(prev => ({
         ...prev,
-        [remote.name]: { success: false, message: 'Test failed', error: String(error) }
+        [remoteName]: { success: false, message: 'Test failed', error: String(error) }
       }));
+      toast({
+        title: "Error",
+        description: `Test failed: ${error}`,
+        type: "error"
+      });
     }
   };
 
@@ -95,22 +182,24 @@ export default function RemotesScreen() {
           <h2 className="text-2xl font-bold">Remote Connections</h2>
           <p className="text-gray-600">Configure SFTP/FTP remotes for source and destination</p>
         </div>
-        <Button onClick={() => setShowAddForm(!showAddForm)}>
-          {showAddForm ? 'Cancel' : 'Add Remote'}
-        </Button>
+        {!showAddForm && (
+          <Button onClick={() => setShowAddForm(true)}>
+            Add Remote
+          </Button>
+        )}
       </div>
 
-      {/* Add Remote Form */}
+      {/* Add/Edit Remote Form */}
       {showAddForm && (
         <Card>
           <CardHeader>
-            <CardTitle>Add New Remote</CardTitle>
-            <CardDescription>Configure a new SFTP or FTP connection</CardDescription>
+            <CardTitle>{editingRemote ? 'Edit Remote' : 'Add New Remote'}</CardTitle>
+            <CardDescription>Configure SFTP or FTP connection</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleAddRemote} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
-                <div>
+                <div className="space-y-2">
                   <Label htmlFor="name">Remote Name</Label>
                   <Input
                     id="name"
@@ -118,24 +207,28 @@ export default function RemotesScreen() {
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                     placeholder="e.g., source-server"
                     required
+                    disabled={!!editingRemote} // Cannot change name when editing (it's the ID)
                   />
                 </div>
-                <div>
+                <div className="space-y-2">
                   <Label htmlFor="type">Type</Label>
-                  <select
-                    id="type"
+                  <Select
                     value={formData.type}
-                    onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                    onValueChange={(value) => setFormData({ ...formData, type: value })}
                   >
-                    <option value="sftp">SFTP</option>
-                    <option value="ftp">FTP</option>
-                  </select>
+                    <SelectTrigger id="type">
+                      <SelectValue placeholder="Select type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="sftp">SFTP</SelectItem>
+                      <SelectItem value="ftp">FTP</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div>
+                <div className="space-y-2">
                   <Label htmlFor="host">Host</Label>
                   <Input
                     id="host"
@@ -145,7 +238,7 @@ export default function RemotesScreen() {
                     required
                   />
                 </div>
-                <div>
+                <div className="space-y-2">
                   <Label htmlFor="port">Port</Label>
                   <Input
                     id="port"
@@ -158,7 +251,7 @@ export default function RemotesScreen() {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div>
+                <div className="space-y-2">
                   <Label htmlFor="user">Username</Label>
                   <Input
                     id="user"
@@ -167,19 +260,20 @@ export default function RemotesScreen() {
                     required
                   />
                 </div>
-                <div>
+                <div className="space-y-2">
                   <Label htmlFor="password">Password</Label>
                   <Input
                     id="password"
                     type="password"
                     value={formData.password}
                     onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    placeholder={editingRemote ? "(Leave empty to keep existing)" : ""}
                   />
-                  <p className="text-xs text-gray-500 mt-1">Leave empty if using SSH key</p>
+                  {editingRemote && <p className="text-xs text-gray-500 mt-1">Only enter to change password</p>}
                 </div>
               </div>
 
-              <div>
+              <div className="space-y-2">
                 <Label htmlFor="key_file">SSH Key File (optional)</Label>
                 <Input
                   id="key_file"
@@ -189,9 +283,14 @@ export default function RemotesScreen() {
                 />
               </div>
 
-              <Button type="submit" className="w-full">
-                Save Remote
-              </Button>
+              <div className="flex gap-2">
+                <Button type="submit" className="flex-1">
+                  {editingRemote ? 'Update Remote' : 'Save Remote'}
+                </Button>
+                <Button type="button" variant="outline" onClick={handleCancelEdit}>
+                  Cancel
+                </Button>
+              </div>
             </form>
           </CardContent>
         </Card>
@@ -199,7 +298,7 @@ export default function RemotesScreen() {
 
       {/* Remotes List */}
       <div className="grid gap-4">
-        {remotes.length === 0 ? (
+        {remotes.length === 0 && !showAddForm ? (
           <Card>
             <CardContent className="py-8 text-center text-gray-500">
               No remotes configured. Add one to get started!
@@ -217,39 +316,52 @@ export default function RemotesScreen() {
                     </CardDescription>
                   </div>
                   <div className="flex gap-2">
+                    <div className="flex items-center gap-2 mr-2">
+                      <Input
+                        className="w-32 h-8 text-sm"
+                        placeholder="Path (default: home)"
+                        value={testPaths[remote.name] || ''}
+                        onChange={(e) => setTestPaths({ ...testPaths, [remote.name]: e.target.value })}
+                      />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleTestRemote(remote.name)}
+                      >
+                        Test
+                      </Button>
+                    </div>
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => handleTestRemote(remote)}
+                      onClick={() => handleEditRemote(remote)}
                     >
-                      Test
+                      Edit
                     </Button>
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => handleDeleteRemote(remote.name)}
+                      onClick={() => confirmDelete(remote.name)}
                     >
                       Delete
                     </Button>
                   </div>
                 </div>
               </CardHeader>
-              
+
               {testResults[remote.name] && (
                 <CardContent>
-                  <div className={`p-3 rounded ${
-                    testResults[remote.name].success
-                      ? 'bg-green-50 border border-green-200'
-                      : 'bg-red-50 border border-red-200'
-                  }`}>
-                    <p className={`font-medium ${
-                      testResults[remote.name].success ? 'text-green-800' : 'text-red-800'
+                  <div className={`p-3 rounded ${testResults[remote.name].success
+                    ? 'bg-green-50 border border-green-200'
+                    : 'bg-red-50 border border-red-200'
                     }`}>
+                    <p className={`font-medium ${testResults[remote.name].success ? 'text-green-800' : 'text-red-800'
+                      }`}>
                       {testResults[remote.name].message}
                     </p>
                     {testResults[remote.name].files && (
                       <div className="mt-2 text-sm text-gray-600">
-                        <p className="font-medium">Sample files:</p>
+                        <p className="font-medium">Sample files (from {testPaths[remote.name] || 'home'}):</p>
                         <ul className="list-disc list-inside">
                           {testResults[remote.name].files!.slice(0, 5).map((file, i) => (
                             <li key={i}>{file}</li>
@@ -269,7 +381,16 @@ export default function RemotesScreen() {
           ))
         )}
       </div>
+
+      <ConfirmationDialog
+        open={!!remoteToDelete}
+        onOpenChange={(open) => !open && setRemoteToDelete(null)}
+        title="Delete Remote"
+        description={`Are you sure you want to delete "${remoteToDelete}"? This action cannot be undone.`}
+        onConfirm={handleDeleteRemote}
+        confirmText="Delete"
+        variant="destructive"
+      />
     </div>
   );
 }
-
