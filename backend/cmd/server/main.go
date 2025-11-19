@@ -1,334 +1,235 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"os"
+	"sync"
+	"time"
 
-	"github.com/gonzague/website-mover/backend/internal/probe"
-	"github.com/gonzague/website-mover/backend/internal/scanner"
-	"github.com/gonzague/website-mover/backend/internal/session"
-	"github.com/gonzague/website-mover/backend/internal/transfer"
-	"github.com/gonzague/website-mover/backend/internal/validation"
+	"github.com/gorilla/mux"
+	"github.com/rs/cors"
+	
+	"github.com/gonzague/website-mover/backend/internal/rclone"
 )
 
-type HealthResponse struct {
-	Status  string `json:"status"`
-	Version string `json:"version"`
-}
-
-// writeJSON writes a JSON response with proper error handling
-func writeJSON(w http.ResponseWriter, statusCode int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		// Log the encoding error but can't change response at this point
-		log.Printf("ERROR: Failed to encode JSON response: %v", err)
-	}
-}
-
-// writeJSONError writes an error response with proper error handling
-func writeJSONError(w http.ResponseWriter, statusCode int, message string) {
-	writeJSON(w, statusCode, map[string]string{"error": message})
+type Server struct {
+	configManager *rclone.ConfigManager
+	executor      *rclone.Executor
+	historyStore  *rclone.HistoryStore
+	
+	// Track active jobs
+	activeJobs map[string]*rclone.MigrationJob
+	jobsMux    sync.RWMutex
 }
 
 func main() {
-	// Get port from environment variable or use default
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	// Initialize components
+	configManager, err := rclone.NewConfigManager("")
+	if err != nil {
+		log.Fatalf("Failed to initialize config manager: %v", err)
 	}
 
-	// Setup routes
-	http.HandleFunc("/health", healthHandler)
-	http.HandleFunc("/api/probe", probeHandler)
-	http.HandleFunc("/api/scan", scanHandler)
-	http.HandleFunc("/api/scan/stream", scanStreamHandler)
-	http.HandleFunc("/api/plan", planHandler)
-	http.HandleFunc("/api/transfer/stream", transferStreamHandler)
-	
-	// Session management endpoints
-	http.HandleFunc("/api/sessions", sessionsHandler)
-	http.HandleFunc("/api/sessions/active", activeSessionsHandler)
-	http.HandleFunc("/api/sessions/", sessionDetailHandler)
+	historyStore, err := rclone.NewHistoryStore("")
+	if err != nil {
+		log.Fatalf("Failed to initialize history store: %v", err)
+	}
 
-	// Enable CORS for local development
-	handler := corsMiddleware(http.DefaultServeMux)
+	executor := rclone.NewExecutor(configManager.GetConfigPath())
+
+	server := &Server{
+		configManager: configManager,
+		executor:      executor,
+		historyStore:  historyStore,
+		activeJobs:    make(map[string]*rclone.MigrationJob),
+	}
+
+	// Setup router
+	router := mux.NewRouter()
+	
+	// Remotes endpoints
+	router.HandleFunc("/api/remotes", server.handleListRemotes).Methods("GET")
+	router.HandleFunc("/api/remotes", server.handleAddRemote).Methods("POST")
+	router.HandleFunc("/api/remotes/{name}", server.handleDeleteRemote).Methods("DELETE")
+	router.HandleFunc("/api/remotes/test", server.handleTestRemote).Methods("POST")
+	
+	// Migration endpoints
+	router.HandleFunc("/api/migrations", server.handleStartMigration).Methods("POST")
+	router.HandleFunc("/api/migrations", server.handleListMigrations).Methods("GET")
+	router.HandleFunc("/api/migrations/{id}/stream", server.handleStreamMigration).Methods("GET")
+	router.HandleFunc("/api/migrations/active", server.handleListActiveJobs).Methods("GET")
+	
+	// History endpoints
+	router.HandleFunc("/api/history", server.handleListHistory).Methods("GET")
+	router.HandleFunc("/api/history/{id}", server.handleGetHistory).Methods("GET")
+
+	// CORS
+	c := cors.New(cors.Options{
+		AllowedOrigins:   []string{"http://localhost:5173", "http://localhost:3000"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"*"},
+		AllowCredentials: true,
+	})
+
+	handler := c.Handler(router)
 
 	// Start server
-	addr := fmt.Sprintf("127.0.0.1:%s", port)
-	log.Printf("Starting Website Mover backend server on %s", addr)
-	if err := http.ListenAndServe(addr, handler); err != nil {
+	port := ":8080"
+	log.Printf("Server starting on %s", port)
+	log.Printf("Rclone config: %s", configManager.GetConfigPath())
+	
+	if err := http.ListenAndServe(port, handler); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func healthHandler(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, HealthResponse{
-		Status:  "ok",
-		Version: "0.1.0",
+// handleListRemotes returns all configured remotes
+func (s *Server) handleListRemotes(w http.ResponseWriter, r *http.Request) {
+	remotes, err := s.configManager.ListRemotes()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"remotes": remotes,
 	})
 }
 
-func probeHandler(w http.ResponseWriter, r *http.Request) {
-	// Only accept POST requests
-	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
+// handleAddRemote adds or updates a remote
+func (s *Server) handleAddRemote(w http.ResponseWriter, r *http.Request) {
+	var remote rclone.Remote
+	if err := json.NewDecoder(r.Body).Decode(&remote); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// Parse request body
-	var config probe.ConnectionConfig
-	if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
-		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %v", err))
+	if err := s.configManager.AddRemote(remote); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Set default ports based on protocol if not specified
-	if config.Port == 0 {
-		switch config.Protocol {
-		case probe.ProtocolSFTP, probe.ProtocolSCP:
-			config.Port = 22
-		case probe.ProtocolFTP:
-			config.Port = 21
-		case probe.ProtocolFTPS:
-			config.Port = 990
-		default:
-			config.Port = 22
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("Remote %s configured successfully", remote.Name),
+	})
+}
+
+// handleDeleteRemote deletes a remote
+func (s *Server) handleDeleteRemote(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	name := vars["name"]
+
+	if err := s.configManager.DeleteRemote(name); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("Remote %s deleted", name),
+	})
+}
+
+// handleTestRemote tests connectivity to a remote
+func (s *Server) handleTestRemote(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RemoteName string `json:"remote_name"`
+		Path       string `json:"path"`
+	}
+	
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	result := s.executor.TestRemote(ctx, req.RemoteName, req.Path)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+// handleStartMigration starts a new migration
+func (s *Server) handleStartMigration(w http.ResponseWriter, r *http.Request) {
+	var opts rclone.MigrationOptions
+	if err := json.NewDecoder(r.Body).Decode(&opts); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Set defaults
+	if opts.Transfers == 0 {
+		opts.Transfers = 8
+	}
+	if opts.Checkers == 0 {
+		opts.Checkers = 8
+	}
+
+	// Use background context so migration continues after HTTP response
+	job, err := s.executor.StartMigration(context.Background(), opts)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Track job
+	s.jobsMux.Lock()
+	s.activeJobs[job.ID] = job
+	s.jobsMux.Unlock()
+
+	// Monitor job completion
+	go func() {
+		// Wait for job to complete
+		for job.Status == "running" {
+			time.Sleep(1 * time.Second)
 		}
-	}
-
-	// Validate configuration
-	if err := validation.ValidateConnectionConfig(&config); err != nil {
-		writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// Run probe
-	log.Printf("Probing %s://%s@%s:%d%s", config.Protocol, config.Username, config.Host, config.Port, config.RootPath)
-	result, err := probe.Probe(config)
-
-	if err != nil && result == nil {
-		// Fatal error (couldn't even create result)
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": fmt.Sprintf("Probe failed: %v", err),
-		})
-		return
-	}
-
-	// Return result (even if probe failed, we return partial results)
-	json.NewEncoder(w).Encode(result)
-}
-
-func scanHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
-	// Parse request
-	var scanReq scanner.ScanRequest
-	if err := json.NewDecoder(r.Body).Decode(&scanReq); err != nil {
-		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %v", err))
-		return
-	}
-
-	// Validate request
-	if err := validation.ValidateScanRequest(&scanReq); err != nil {
-		writeJSONError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// Validate required fields
-	if scanReq.ServerConfig.Host == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": "Server host is required",
-		})
-		return
-	}
-
-	// Create scanner
-	log.Printf("Starting scan of %s@%s:%d%s",
-		scanReq.ServerConfig.Username,
-		scanReq.ServerConfig.Host,
-		scanReq.ServerConfig.Port,
-		scanReq.ServerConfig.RootPath)
-
-	scan := scanner.NewScanner(scanReq.ServerConfig)
-
-	// Perform scan
-	result, err := scan.Scan(scanReq)
-	if err != nil && result == nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": fmt.Sprintf("Scan failed: %v", err),
-		})
-		return
-	}
-
-	// Return result (even if partial)
-	json.NewEncoder(w).Encode(result)
-}
-
-func scanStreamHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
-	// Parse request
-	var scanReq scanner.ScanRequest
-	if err := json.NewDecoder(r.Body).Decode(&scanReq); err != nil {
-		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %v", err))
-		return
-	}
-
-	// Validate
-	if scanReq.ServerConfig.Host == "" {
-		writeJSONError(w, http.StatusBadRequest, "Server host is required")
-		return
-	}
-
-	// Create session job
-	mgr := session.GetManager()
-	jobID := mgr.CreateJob(session.JobTypeScan, &scanReq.ServerConfig, nil)
-	mgr.UpdateJobStatus(jobID, session.JobStatusRunning)
-	
-	log.Printf("Created scan job %s", jobID)
-
-	// Set SSE headers
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("X-Job-ID", jobID) // Send job ID to client
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-	
-	// Send job ID as first event
-	jobIDData, _ := json.Marshal(map[string]string{"job_id": jobID})
-	fmt.Fprintf(w, "event: job_created\ndata: %s\n\n", jobIDData)
-	flusher.Flush()
-
-	// Create scanner with progress callback
-	scan := scanner.NewScanner(scanReq.ServerConfig)
-
-	// Set up progress callback to send SSE events
-	scan.SetProgressCallback(func(progress scanner.ScanProgress) {
-		// Update job progress
-		mgr.UpdateJobProgress(jobID, progress)
 		
-		data, _ := json.Marshal(progress)
-		fmt.Fprintf(w, "data: %s\n\n", data)
-		flusher.Flush()
+		// Add to history
+		if err := s.historyStore.Add(job, time.Now()); err != nil {
+			log.Printf("Failed to add job to history: %v", err)
+		}
+
+		// Remove from active jobs
+		s.jobsMux.Lock()
+		delete(s.activeJobs, job.ID)
+		s.jobsMux.Unlock()
+	}()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"job_id":  job.ID,
+		"command": job.Command,
+		"status":  job.Status,
 	})
-
-	log.Printf("Starting streaming scan of %s@%s:%d%s",
-		scanReq.ServerConfig.Username,
-		scanReq.ServerConfig.Host,
-		scanReq.ServerConfig.Port,
-		scanReq.ServerConfig.RootPath)
-
-	// Perform scan
-	result, err := scan.Scan(scanReq)
-
-	// Update job with result
-	if err != nil && result == nil {
-		mgr.SetJobError(jobID, err)
-		mgr.UpdateJobStatus(jobID, session.JobStatusFailed)
-		
-		errorData, _ := json.Marshal(map[string]string{
-			"error": fmt.Sprintf("Scan failed: %v", err),
-		})
-		fmt.Fprintf(w, "event: error\ndata: %s\n\n", errorData)
-	} else {
-		mgr.SetJobResult(jobID, result)
-		mgr.UpdateJobStatus(jobID, session.JobStatusCompleted)
-		
-		resultData, _ := json.Marshal(result)
-		fmt.Fprintf(w, "event: complete\ndata: %s\n\n", resultData)
-	}
-	flusher.Flush()
 }
 
-func planHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
+// handleStreamMigration streams migration output via SSE
+func (s *Server) handleStreamMigration(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	jobID := vars["id"]
+
+	// Find job
+	s.jobsMux.RLock()
+	job, exists := s.activeJobs[jobID]
+	s.jobsMux.RUnlock()
+
+	if !exists {
+		http.Error(w, "Job not found", http.StatusNotFound)
 		return
 	}
 
-	// Parse request - expects scan result + both probe results + connection configs
-	var planReq struct {
-		ScanResult   *scanner.ScanResult     `json:"scan_result"`
-		SourceProbe  *probe.ProbeResult      `json:"source_probe"`
-		DestProbe    *probe.ProbeResult      `json:"dest_probe"`
-		SourceConfig *probe.ConnectionConfig `json:"source_config"`
-		DestConfig   *probe.ConnectionConfig `json:"dest_config"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&planReq); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": fmt.Sprintf("Invalid request body: %v", err),
-		})
-		return
-	}
-
-	// Validate
-	if planReq.ScanResult == nil || planReq.SourceProbe == nil || planReq.DestProbe == nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": "scan_result, source_probe, and dest_probe are required",
-		})
-		return
-	}
-
-	log.Printf("Generating migration plan...")
-
-	// Generate plan
-	plan := scanner.GeneratePlan(planReq.ScanResult, planReq.SourceProbe, planReq.DestProbe, planReq.SourceConfig, planReq.DestConfig)
-
-	json.NewEncoder(w).Encode(plan)
-}
-
-func transferStreamHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
-	// Parse request
-	var transferReq transfer.TransferRequest
-	if err := json.NewDecoder(r.Body).Decode(&transferReq); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": fmt.Sprintf("Invalid request body: %v", err),
-		})
-		return
-	}
-
-	// Validate
-	if transferReq.SourceConfig.Host == "" || transferReq.DestConfig.Host == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": "Source and destination configs are required",
-		})
-		return
-	}
-
-	// Set SSE headers
+	// Setup SSE
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -336,164 +237,108 @@ func transferStreamHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create session job
-	mgr := session.GetManager()
-	jobID := mgr.CreateJob(session.JobTypeTransfer, &transferReq.SourceConfig, &transferReq.DestConfig)
-	mgr.UpdateJobStatus(jobID, session.JobStatusRunning)
-	
-	log.Printf("========================================")
-	log.Printf("Created transfer job %s", jobID)
-	log.Printf("Starting transfer from %s to %s using %s",
-		transferReq.SourceConfig.Host,
-		transferReq.DestConfig.Host,
-		transferReq.Method)
-	log.Printf("  Source: %s@%s:%d%s",
-		transferReq.SourceConfig.Username,
-		transferReq.SourceConfig.Host,
-		transferReq.SourceConfig.Port,
-		transferReq.SourceConfig.RootPath)
-	log.Printf("  Dest: %s@%s:%d%s",
-		transferReq.DestConfig.Username,
-		transferReq.DestConfig.Host,
-		transferReq.DestConfig.Port,
-		transferReq.DestConfig.RootPath)
-	log.Printf("  Exclusions: %d patterns", len(transferReq.Exclusions))
-	log.Printf("  Dry run: %v", transferReq.DryRun)
-	log.Printf("========================================")
-	
-	// Send job ID as first event
-	jobIDData, _ := json.Marshal(map[string]string{"job_id": jobID})
-	fmt.Fprintf(w, "event: job_created\ndata: %s\n\n", jobIDData)
-	flusher.Flush()
+	// Subscribe to job output
+	ch := job.Subscribe()
 
-	// Create executor with progress callback
-	executor := transfer.NewSFTPExecutor(transferReq, func(progress transfer.TransferProgress) {
-		// Update job progress
-		mgr.UpdateJobProgress(jobID, progress)
-		
-		data, _ := json.Marshal(progress)
-		fmt.Fprintf(w, "data: %s\n\n", data)
-		flusher.Flush()
-	})
-
-	// Execute transfer
-	result, err := executor.Execute()
-
-	// Update job with result
-	if err != nil && result == nil {
-		mgr.SetJobError(jobID, err)
-		mgr.UpdateJobStatus(jobID, session.JobStatusFailed)
-		
-		errorData, _ := json.Marshal(map[string]string{
-			"error": fmt.Sprintf("Transfer failed: %v", err),
-		})
-		fmt.Fprintf(w, "event: error\ndata: %s\n\n", errorData)
-	} else {
-		mgr.SetJobResult(jobID, result)
-		mgr.UpdateJobStatus(jobID, session.JobStatusCompleted)
-		
-		resultData, _ := json.Marshal(result)
-		fmt.Fprintf(w, "event: complete\ndata: %s\n\n", resultData)
-	}
-	flusher.Flush()
-}
-
-// sessionsHandler handles listing all sessions or creating new ones
-func sessionsHandler(w http.ResponseWriter, r *http.Request) {
-	mgr := session.GetManager()
-	
-	switch r.Method {
-	case "GET":
-		// List all sessions
-		jobs := mgr.ListJobs(nil)
-		writeJSON(w, http.StatusOK, jobs)
-		
-	case "DELETE":
-		// Clear completed sessions
-		jobs := mgr.ListJobs(nil)
-		deleted := 0
-		for _, job := range jobs {
-			if job.Status == session.JobStatusCompleted || 
-			   job.Status == session.JobStatusFailed || 
-			   job.Status == session.JobStatusCancelled {
-				mgr.DeleteJob(job.ID)
-				deleted++
-			}
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"deleted": deleted,
-		})
-		
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-// activeSessionsHandler returns only active (pending/running) sessions
-func activeSessionsHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	
-	mgr := session.GetManager()
-	jobs := mgr.GetActiveJobs()
-	writeJSON(w, http.StatusOK, jobs)
-}
-
-// sessionDetailHandler handles operations on a specific session
-func sessionDetailHandler(w http.ResponseWriter, r *http.Request) {
-	// Extract session ID from URL path
-	sessionID := r.URL.Path[len("/api/sessions/"):]
-	if sessionID == "" || sessionID == "active" {
-		http.Error(w, "Session ID required", http.StatusBadRequest)
-		return
-	}
-	
-	mgr := session.GetManager()
-	
-	switch r.Method {
-	case "GET":
-		// Get session details
-		job, err := mgr.GetJob(sessionID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+	for {
+		select {
+		case <-r.Context().Done():
 			return
-		}
-		writeJSON(w, http.StatusOK, job)
-		
-	case "DELETE":
-		// Cancel or delete session
-		err := mgr.CancelJob(sessionID)
-		if err != nil {
-			// If can't cancel (already finished), try to delete
-			err = mgr.DeleteJob(sessionID)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
+		case line, ok := <-ch:
+			if !ok {
+				// Channel closed, job completed
+				fmt.Fprintf(w, "data: {\"type\":\"complete\",\"status\":\"%s\"}\n\n", job.Status)
+				flusher.Flush()
 				return
 			}
+			
+			// Send line
+			data, _ := json.Marshal(map[string]string{
+				"type": "output",
+				"line": line,
+			})
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
 		}
-		writeJSON(w, http.StatusOK, map[string]string{
-			"message": "Session cancelled/deleted",
-		})
-		
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-// corsMiddleware enables CORS for local development
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+// handleListActiveJobs lists currently running jobs
+func (s *Server) handleListActiveJobs(w http.ResponseWriter, r *http.Request) {
+	s.jobsMux.RLock()
+	defer s.jobsMux.RUnlock()
 
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
+	jobs := []map[string]interface{}{}
+	for _, job := range s.activeJobs {
+		jobs = append(jobs, map[string]interface{}{
+			"id":         job.ID,
+			"command":    job.Command,
+			"start_time": job.StartTime,
+			"status":     job.Status,
+		})
+	}
 
-		next.ServeHTTP(w, r)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"jobs": jobs,
 	})
+}
+
+// handleListMigrations lists all migrations (active + history)
+func (s *Server) handleListMigrations(w http.ResponseWriter, r *http.Request) {
+	// Get history
+	history, err := s.historyStore.List()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Get active jobs
+	s.jobsMux.RLock()
+	activeJobs := make([]map[string]interface{}, 0, len(s.activeJobs))
+	for _, job := range s.activeJobs {
+		activeJobs = append(activeJobs, map[string]interface{}{
+			"id":         job.ID,
+			"command":    job.Command,
+			"start_time": job.StartTime,
+			"status":     job.Status,
+			"options":    job.Options,
+		})
+	}
+	s.jobsMux.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"active":  activeJobs,
+		"history": history,
+	})
+}
+
+// handleListHistory lists migration history
+func (s *Server) handleListHistory(w http.ResponseWriter, r *http.Request) {
+	history, err := s.historyStore.List()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"history": history,
+	})
+}
+
+// handleGetHistory gets a specific history entry
+func (s *Server) handleGetHistory(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := vars["id"]
+
+	history, err := s.historyStore.Get(id)
+	if err != nil {
+		http.Error(w, "History not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(history)
 }

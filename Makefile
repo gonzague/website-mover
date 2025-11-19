@@ -1,75 +1,37 @@
-.PHONY: help build-backend run-backend stop-backend dev-frontend dev build clean install test test-backend test-frontend lint lint-backend lint-frontend
+.PHONY: all backend frontend clean run dev check-rclone
 
-SHELL := /bin/bash
+all: check-rclone backend frontend
 
-help: ## Show this help message
-	@echo 'Usage: make [target]'
-	@echo ''
-	@echo 'Available targets:'
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+check-rclone:
+	@which rclone > /dev/null || (echo "❌ rclone not found. Install it first: https://rclone.org/install/" && exit 1)
+	@echo "✓ rclone found: $$(rclone version | head -n1)"
 
-build-backend: ## Build Go backend binary
-	@echo "Building backend binary..."
-	@cd backend && go build -o bin/server cmd/server/main.go
-	@echo "Backend built: backend/bin/server"
+backend:
+	@echo "Building backend..."
+	cd backend && go build -o server ./cmd/server/main.go
+	@echo "✓ Backend built: backend/server"
 
-build-frontend: ## Build frontend for production
+frontend:
 	@echo "Building frontend..."
-	@cd frontend && npm run build
-	@echo "Frontend built: frontend/dist"
+	cd frontend && npm install && npm run build
+	@echo "✓ Frontend built: frontend/dist/"
 
-build: build-backend build-frontend ## Build both backend and frontend for production
+clean:
+	rm -f backend/server
+	rm -rf frontend/dist
 
-run-backend: ## Run Go backend server locally
-	@echo "Starting backend server on http://127.0.0.1:8080"
-	@cd backend && go run cmd/server/main.go
+run: all
+	@echo "Starting backend on http://localhost:8080"
+	@echo "Visit frontend at http://localhost:5173"
+	@echo ""
+	cd backend && ./server
 
-stop-backend: ## Stop running backend server
-	@pkill -f "go run cmd/server/main.go" || echo "No backend server running"
-
-dev-frontend: ## Run Vite dev server (frontend only, needs backend running separately)
-	@cd frontend && npm run dev
-
-dev: ## Run full development environment (frontend + backend)
-	@echo "Starting development environment..."
-	@echo "Backend: http://127.0.0.1:8080"
-	@echo "Frontend: http://localhost:5173"
-	@make -j2 run-backend dev-frontend
-
-clean: ## Clean build artifacts
-	@echo "Cleaning build artifacts..."
-	@rm -rf backend/bin
-	@rm -rf frontend/dist
-	@echo "Clean complete!"
-
-install: ## Install all dependencies
-	@echo "Installing Go dependencies..."
-	@cd backend && go mod download
-	@echo "Installing frontend dependencies..."
-	@cd frontend && npm install
-	@echo "All dependencies installed!"
-
-test-backend: ## Run Go backend tests
-	@echo "Running backend tests..."
-	@cd backend && go test -v -race -coverprofile=coverage.txt ./...
-	@echo "Backend tests complete!"
-
-test-frontend: ## Run frontend tests
-	@echo "Running frontend tests..."
-	@cd frontend && npm run test || echo "Frontend tests not yet configured"
-	@echo "Frontend tests complete!"
-
-test: test-backend test-frontend ## Run all tests
-
-lint-backend: ## Lint Go backend code
-	@echo "Linting backend code..."
-	@cd backend && go vet ./...
-	@cd backend && go fmt ./...
-	@echo "Backend linting complete!"
-
-lint-frontend: ## Lint frontend code
-	@echo "Linting frontend code..."
-	@cd frontend && npm run lint || echo "Fix ESLint configuration first"
-	@echo "Frontend linting complete!"
-
-lint: lint-backend lint-frontend ## Lint all code
+dev:
+	@echo "Run these in separate terminals:"
+	@echo ""
+	@echo "Terminal 1 (Backend):"
+	@echo "  cd backend && go run ./cmd/server/main.go"
+	@echo ""
+	@echo "Terminal 2 (Frontend):"
+	@echo "  cd frontend && npm run dev"
+	@echo ""
