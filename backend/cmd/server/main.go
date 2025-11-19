@@ -9,6 +9,7 @@ import (
 
 	"github.com/gonzague/website-mover/backend/internal/probe"
 	"github.com/gonzague/website-mover/backend/internal/scanner"
+	"github.com/gonzague/website-mover/backend/internal/session"
 	"github.com/gonzague/website-mover/backend/internal/transfer"
 	"github.com/gonzague/website-mover/backend/internal/validation"
 )
@@ -47,6 +48,11 @@ func main() {
 	http.HandleFunc("/api/scan/stream", scanStreamHandler)
 	http.HandleFunc("/api/plan", planHandler)
 	http.HandleFunc("/api/transfer/stream", transferStreamHandler)
+	
+	// Session management endpoints
+	http.HandleFunc("/api/sessions", sessionsHandler)
+	http.HandleFunc("/api/sessions/active", activeSessionsHandler)
+	http.HandleFunc("/api/sessions/", sessionDetailHandler)
 
 	// Enable CORS for local development
 	handler := corsMiddleware(http.DefaultServeMux)
@@ -187,23 +193,39 @@ func scanStreamHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Create session job
+	mgr := session.GetManager()
+	jobID := mgr.CreateJob(session.JobTypeScan, &scanReq.ServerConfig, nil)
+	mgr.UpdateJobStatus(jobID, session.JobStatusRunning)
+	
+	log.Printf("Created scan job %s", jobID)
+
 	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("X-Job-ID", jobID) // Send job ID to client
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	
+	// Send job ID as first event
+	jobIDData, _ := json.Marshal(map[string]string{"job_id": jobID})
+	fmt.Fprintf(w, "event: job_created\ndata: %s\n\n", jobIDData)
+	flusher.Flush()
 
 	// Create scanner with progress callback
 	scan := scanner.NewScanner(scanReq.ServerConfig)
 
 	// Set up progress callback to send SSE events
 	scan.SetProgressCallback(func(progress scanner.ScanProgress) {
+		// Update job progress
+		mgr.UpdateJobProgress(jobID, progress)
+		
 		data, _ := json.Marshal(progress)
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
@@ -218,13 +240,19 @@ func scanStreamHandler(w http.ResponseWriter, r *http.Request) {
 	// Perform scan
 	result, err := scan.Scan(scanReq)
 
-	// Send final result
+	// Update job with result
 	if err != nil && result == nil {
+		mgr.SetJobError(jobID, err)
+		mgr.UpdateJobStatus(jobID, session.JobStatusFailed)
+		
 		errorData, _ := json.Marshal(map[string]string{
 			"error": fmt.Sprintf("Scan failed: %v", err),
 		})
 		fmt.Fprintf(w, "event: error\ndata: %s\n\n", errorData)
 	} else {
+		mgr.SetJobResult(jobID, result)
+		mgr.UpdateJobStatus(jobID, session.JobStatusCompleted)
+		
 		resultData, _ := json.Marshal(result)
 		fmt.Fprintf(w, "event: complete\ndata: %s\n\n", resultData)
 	}
@@ -308,13 +336,41 @@ func transferStreamHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Create session job
+	mgr := session.GetManager()
+	jobID := mgr.CreateJob(session.JobTypeTransfer, &transferReq.SourceConfig, &transferReq.DestConfig)
+	mgr.UpdateJobStatus(jobID, session.JobStatusRunning)
+	
+	log.Printf("========================================")
+	log.Printf("Created transfer job %s", jobID)
 	log.Printf("Starting transfer from %s to %s using %s",
 		transferReq.SourceConfig.Host,
 		transferReq.DestConfig.Host,
 		transferReq.Method)
+	log.Printf("  Source: %s@%s:%d%s",
+		transferReq.SourceConfig.Username,
+		transferReq.SourceConfig.Host,
+		transferReq.SourceConfig.Port,
+		transferReq.SourceConfig.RootPath)
+	log.Printf("  Dest: %s@%s:%d%s",
+		transferReq.DestConfig.Username,
+		transferReq.DestConfig.Host,
+		transferReq.DestConfig.Port,
+		transferReq.DestConfig.RootPath)
+	log.Printf("  Exclusions: %d patterns", len(transferReq.Exclusions))
+	log.Printf("  Dry run: %v", transferReq.DryRun)
+	log.Printf("========================================")
+	
+	// Send job ID as first event
+	jobIDData, _ := json.Marshal(map[string]string{"job_id": jobID})
+	fmt.Fprintf(w, "event: job_created\ndata: %s\n\n", jobIDData)
+	flusher.Flush()
 
 	// Create executor with progress callback
 	executor := transfer.NewSFTPExecutor(transferReq, func(progress transfer.TransferProgress) {
+		// Update job progress
+		mgr.UpdateJobProgress(jobID, progress)
+		
 		data, _ := json.Marshal(progress)
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
@@ -323,17 +379,107 @@ func transferStreamHandler(w http.ResponseWriter, r *http.Request) {
 	// Execute transfer
 	result, err := executor.Execute()
 
-	// Send final result
+	// Update job with result
 	if err != nil && result == nil {
+		mgr.SetJobError(jobID, err)
+		mgr.UpdateJobStatus(jobID, session.JobStatusFailed)
+		
 		errorData, _ := json.Marshal(map[string]string{
 			"error": fmt.Sprintf("Transfer failed: %v", err),
 		})
 		fmt.Fprintf(w, "event: error\ndata: %s\n\n", errorData)
 	} else {
+		mgr.SetJobResult(jobID, result)
+		mgr.UpdateJobStatus(jobID, session.JobStatusCompleted)
+		
 		resultData, _ := json.Marshal(result)
 		fmt.Fprintf(w, "event: complete\ndata: %s\n\n", resultData)
 	}
 	flusher.Flush()
+}
+
+// sessionsHandler handles listing all sessions or creating new ones
+func sessionsHandler(w http.ResponseWriter, r *http.Request) {
+	mgr := session.GetManager()
+	
+	switch r.Method {
+	case "GET":
+		// List all sessions
+		jobs := mgr.ListJobs(nil)
+		writeJSON(w, http.StatusOK, jobs)
+		
+	case "DELETE":
+		// Clear completed sessions
+		jobs := mgr.ListJobs(nil)
+		deleted := 0
+		for _, job := range jobs {
+			if job.Status == session.JobStatusCompleted || 
+			   job.Status == session.JobStatusFailed || 
+			   job.Status == session.JobStatusCancelled {
+				mgr.DeleteJob(job.ID)
+				deleted++
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"deleted": deleted,
+		})
+		
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// activeSessionsHandler returns only active (pending/running) sessions
+func activeSessionsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	mgr := session.GetManager()
+	jobs := mgr.GetActiveJobs()
+	writeJSON(w, http.StatusOK, jobs)
+}
+
+// sessionDetailHandler handles operations on a specific session
+func sessionDetailHandler(w http.ResponseWriter, r *http.Request) {
+	// Extract session ID from URL path
+	sessionID := r.URL.Path[len("/api/sessions/"):]
+	if sessionID == "" || sessionID == "active" {
+		http.Error(w, "Session ID required", http.StatusBadRequest)
+		return
+	}
+	
+	mgr := session.GetManager()
+	
+	switch r.Method {
+	case "GET":
+		// Get session details
+		job, err := mgr.GetJob(sessionID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		writeJSON(w, http.StatusOK, job)
+		
+	case "DELETE":
+		// Cancel or delete session
+		err := mgr.CancelJob(sessionID)
+		if err != nil {
+			// If can't cancel (already finished), try to delete
+			err = mgr.DeleteJob(sessionID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]string{
+			"message": "Session cancelled/deleted",
+		})
+		
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 // corsMiddleware enables CORS for local development

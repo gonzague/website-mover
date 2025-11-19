@@ -29,6 +29,7 @@ type TransferRequest struct {
 	VerifyAfterTransfer bool                         `json:"verify_after_transfer"`
 	SkipLargeFiles    *int                           `json:"skip_large_files,omitempty"` // MB
 	DryRun            bool                           `json:"dry_run"`
+	Files             []scanner.FileEntry            `json:"files,omitempty"` // Pre-scanned files (avoids re-scanning)
 }
 
 // TransferProgress represents the current state of a transfer

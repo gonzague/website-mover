@@ -1,0 +1,333 @@
+import { useState, useEffect } from 'react'
+import { ConnectionsScreen } from '@/components/screens/ConnectionsScreen'
+import { PlanScreen } from '@/components/screens/PlanScreen'
+import { TransferConfigScreen, type TransferConfig } from '@/components/screens/TransferConfigScreen'
+import { TransferExecutionScreen } from '@/components/screens/TransferExecutionScreen'
+import { ResumeJobDialog } from '@/components/session/ResumeJobDialog'
+import type { ConnectionConfig, ProbeResult } from '@/types/probe'
+import type { ScanResult, PlanResult } from '@/types/scanner'
+import { saveSessionState, loadSessionState, clearSessionState } from '@/lib/storage'
+import { useActiveJobs } from '@/hooks/useActiveJobs'
+import { cancelSession, type Job } from '@/api/sessions'
+
+type Screen = 'connections' | 'plan' | 'transfer-config' | 'transfer-execution'
+
+interface ServerData {
+  config: ConnectionConfig
+  probe: ProbeResult
+}
+
+function App() {
+  const [currentScreen, setCurrentScreen] = useState<Screen>('connections')
+  const [sourceServer, setSourceServer] = useState<ServerData | null>(null)
+  const [destServer, setDestServer] = useState<ServerData | null>(null)
+  const [scanResult, setScanResult] = useState<ScanResult | null>(null)
+  const [planResult, setPlanResult] = useState<PlanResult | null>(null)
+  const [transferConfig, setTransferConfig] = useState<TransferConfig | null>(null)
+  const [transferInterrupted, setTransferInterrupted] = useState(false)
+  const [showResumeDialog, setShowResumeDialog] = useState(false)
+  
+  // Check for active jobs on mount
+  const { activeJobs, loading: loadingJobs, refresh: refreshJobs } = useActiveJobs()
+
+  // Load session state and check for active jobs on mount
+  useEffect(() => {
+    const savedState = loadSessionState()
+    if (savedState) {
+      console.log('Restoring session state from', new Date(savedState.timestamp))
+      
+      // If we were on transfer-execution, go back to transfer-config instead
+      // because we can't resume an active SSE transfer connection
+      const restoredScreen = savedState.currentScreen === 'transfer-execution' 
+        ? 'transfer-config' 
+        : savedState.currentScreen
+      
+      if (savedState.currentScreen === 'transfer-execution') {
+        console.warn('Transfer was interrupted. Returning to configuration screen.')
+        setTransferInterrupted(true)
+      }
+      
+      setCurrentScreen(restoredScreen as Screen)
+      setSourceServer(savedState.sourceServer)
+      setDestServer(savedState.destServer)
+      setScanResult(savedState.scanResult)
+      setPlanResult(savedState.planResult)
+      setTransferConfig(savedState.transferConfig)
+    }
+    
+    // Check for active jobs after a short delay (let state load first)
+    const timer = setTimeout(() => {
+      if (!loadingJobs && activeJobs.length > 0) {
+        console.log(`Found ${activeJobs.length} active job(s)`)
+        setShowResumeDialog(true)
+      }
+    }, 500)
+    
+    return () => clearTimeout(timer)
+  }, [activeJobs, loadingJobs])
+
+  // Save session state whenever it changes
+  useEffect(() => {
+    // Don't save if we're on the connections screen with no data
+    if (currentScreen === 'connections' && !sourceServer && !destServer) {
+      return
+    }
+
+    // Save transfer-execution screen state so we can redirect to config on refresh
+    // We keep the screen name but will redirect on restore
+    saveSessionState({
+      currentScreen,
+      sourceServer,
+      destServer,
+      scanResult,
+      planResult,
+      transferConfig,
+    })
+  }, [currentScreen, sourceServer, destServer, scanResult, planResult, transferConfig])
+
+  const handleConnectionsNext = (source: ServerData, dest: ServerData) => {
+    setSourceServer(source)
+    setDestServer(dest)
+    setCurrentScreen('plan')
+  }
+
+  const handlePlanNext = (scan: ScanResult, plan: PlanResult) => {
+    setScanResult(scan)
+    setPlanResult(plan)
+    setCurrentScreen('transfer-config')
+  }
+
+  const handleBackToConnections = () => {
+    setCurrentScreen('connections')
+  }
+
+  const handleBackToPlan = () => {
+    setCurrentScreen('plan')
+  }
+
+  const handleBackToConfig = () => {
+    setCurrentScreen('transfer-config')
+  }
+
+  const handleStartTransfer = (config: TransferConfig) => {
+    setTransferConfig(config)
+    setTransferInterrupted(false) // Clear any previous interruption flag
+    setCurrentScreen('transfer-execution')
+  }
+
+  const handleTransferComplete = () => {
+    // Reset and go back to connections
+    clearSessionState()
+    setCurrentScreen('connections')
+    setSourceServer(null)
+    setDestServer(null)
+    setScanResult(null)
+    setPlanResult(null)
+    setTransferConfig(null)
+    refreshJobs() // Refresh job list
+  }
+
+  const handleResumeJob = async (job: Job) => {
+    console.log('Resuming job:', job)
+    
+    // Restore state based on job type and status
+    if (job.type === 'scan') {
+      // Restore source server from job
+      if (job.source_config) {
+        const sourceData = {
+          config: job.source_config,
+          probe: {
+            success: true,
+            message: 'Restored from session',
+            protocol: job.source_config.protocol,
+            performance: {
+              latency: 0,
+              latency_ms: 0,
+              upload_speed: 0,
+              download_speed: 0,
+              connection_time: 0,
+              connection_time_ms: 0
+            },
+            capabilities: {
+              shell_available: false,
+              mlsd_supported: false,
+              fxp_allowed: false,
+              can_read: true,
+              can_write: true,
+              can_list: true
+            },
+            badges: []
+          } as ProbeResult
+        }
+        setSourceServer(sourceData)
+        
+        // If scan is completed, show results
+        if (job.status === 'completed' && job.scan_result) {
+          setScanResult(job.scan_result)
+          setCurrentScreen('plan')
+        } else if (job.status === 'running') {
+          // Scan is still running - take to plan screen which will auto-start
+          setCurrentScreen('plan')
+        }
+      }
+    } else if (job.type === 'transfer') {
+      // Restore transfer state
+      if (job.source_config && job.dest_config) {
+        const sourceData = {
+          config: job.source_config,
+          probe: {
+            success: true,
+            message: 'Restored from session',
+            protocol: job.source_config.protocol,
+            performance: {
+              latency: 0,
+              latency_ms: 0,
+              upload_speed: 0,
+              download_speed: 0,
+              connection_time: 0,
+              connection_time_ms: 0
+            },
+            capabilities: {
+              shell_available: false,
+              mlsd_supported: false,
+              fxp_allowed: false,
+              can_read: true,
+              can_write: true,
+              can_list: true
+            },
+            badges: []
+          } as ProbeResult
+        }
+        const destData = {
+          config: job.dest_config,
+          probe: {
+            success: true,
+            message: 'Restored from session',
+            protocol: job.dest_config.protocol,
+            performance: {
+              latency: 0,
+              latency_ms: 0,
+              upload_speed: 0,
+              download_speed: 0,
+              connection_time: 0,
+              connection_time_ms: 0
+            },
+            capabilities: {
+              shell_available: false,
+              mlsd_supported: false,
+              fxp_allowed: false,
+              can_read: true,
+              can_write: true,
+              can_list: true
+            },
+            badges: []
+          } as ProbeResult
+        }
+        
+        setSourceServer(sourceData)
+        setDestServer(destData)
+        
+        // If we have scan and plan results, restore them
+        if (job.scan_result) {
+          setScanResult(job.scan_result)
+        }
+        if (job.plan_result) {
+          setPlanResult(job.plan_result)
+        }
+        
+        // Navigate to appropriate screen based on status
+        if (job.status === 'completed' && job.transfer_result) {
+          // Transfer completed - show config screen
+          setCurrentScreen('transfer-config')
+        } else if (job.status === 'running') {
+          // Transfer is running - would need to reconnect (not fully supported yet)
+          setCurrentScreen('transfer-config')
+          console.warn('Live transfer reconnection not yet supported')
+        } else {
+          setCurrentScreen('transfer-config')
+        }
+      }
+    }
+  }
+
+  const handleCancelJob = async (job: Job) => {
+    try {
+      await cancelSession(job.id)
+      console.log('Cancelled job:', job.id)
+      refreshJobs()
+    } catch (error) {
+      console.error('Failed to cancel job:', error)
+    }
+  }
+
+  return (
+    <>
+      {/* Resume Dialog for Active Jobs */}
+      <ResumeJobDialog
+        jobs={activeJobs}
+        open={showResumeDialog}
+        onClose={() => setShowResumeDialog(false)}
+        onResume={handleResumeJob}
+        onCancel={handleCancelJob}
+      />
+
+      {currentScreen === 'connections' && (
+        <ConnectionsScreen onNext={handleConnectionsNext} />
+      )}
+      {currentScreen === 'plan' && sourceServer && destServer && (
+        <PlanScreen
+          source={sourceServer}
+          dest={destServer}
+          onBack={handleBackToConnections}
+          onNext={handlePlanNext}
+        />
+      )}
+      {currentScreen === 'transfer-config' && sourceServer && destServer && scanResult && planResult && (
+        <>
+          {transferInterrupted && (
+            <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md">
+              <div className="bg-yellow-900 border border-yellow-600 text-yellow-200 px-6 py-4 rounded-lg shadow-lg">
+                <div className="flex items-center gap-3">
+                  <svg className="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                  <div>
+                    <p className="font-semibold">Transfer Interrupted</p>
+                    <p className="text-sm mt-1">The page was refreshed during transfer. Click "Start Transfer" to begin again.</p>
+                  </div>
+                  <button 
+                    onClick={() => setTransferInterrupted(false)}
+                    className="ml-auto text-yellow-200 hover:text-white"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          <TransferConfigScreen
+            plan={planResult}
+            scanResult={scanResult}
+            source={sourceServer}
+            dest={destServer}
+            onBack={handleBackToPlan}
+            onStartTransfer={handleStartTransfer}
+          />
+        </>
+      )}
+      {currentScreen === 'transfer-execution' && sourceServer && destServer && planResult && transferConfig && (
+        <TransferExecutionScreen
+          plan={planResult}
+          sourceConfig={sourceServer.config}
+          destConfig={destServer.config}
+          onComplete={handleTransferComplete}
+          onBack={handleBackToConfig}
+        />
+      )}
+    </>
+  )
+}
+
+export default App

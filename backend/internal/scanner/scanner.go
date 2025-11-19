@@ -5,6 +5,7 @@ package scanner
 
 import (
 	"fmt"
+	"log"
 	"path"
 	"path/filepath"
 	"sort"
@@ -115,7 +116,9 @@ func (s *Scanner) Scan(request ScanRequest) (*ScanResult, error) {
 	}
 
 	// Connect to server
+	log.Printf("Scanner connecting to %s@%s:%d", s.config.Username, s.config.Host, s.config.Port)
 	if err := s.Connect(); err != nil {
+		log.Printf("ERROR: Scanner connection failed: %v", err)
 		return &ScanResult{
 			Success:      false,
 			ErrorMessage: err.Error(),
@@ -124,17 +127,22 @@ func (s *Scanner) Scan(request ScanRequest) (*ScanResult, error) {
 		}, err
 	}
 	defer s.Close()
+	log.Printf("✓ Scanner connected successfully")
 
 	// Perform scan
 	s.progress.Status = "scanning"
 	s.progress.Message = "Starting file scan..."
 	s.sendProgress()
+	
+	log.Printf("Starting recursive scan of: %s", s.config.RootPath)
 
 	var allFiles []FileEntry
 	err := s.scanDirectory(s.config.RootPath, 0, &allFiles)
 
 	endTime := time.Now()
 	duration := endTime.Sub(startTime)
+	
+	log.Printf("✓ Scan complete: %d files found in %s", len(allFiles), duration)
 
 	if err != nil && len(allFiles) == 0 {
 		return &ScanResult{
@@ -154,7 +162,13 @@ func (s *Scanner) Scan(request ScanRequest) (*ScanResult, error) {
 	if request.DetectCMS {
 		s.progress.Status = "analyzing"
 		s.progress.Message = "Detecting CMS..."
+		log.Printf("Running CMS detection...")
 		cmsDetection = s.detectCMS(allFiles)
+		if cmsDetection != nil && cmsDetection.Detected {
+			log.Printf("✓ CMS detected: %s (confidence: %.0f%%)", cmsDetection.Type, cmsDetection.Confidence)
+		} else {
+			log.Printf("No CMS detected")
+		}
 	}
 
 	s.progress.Status = "complete"

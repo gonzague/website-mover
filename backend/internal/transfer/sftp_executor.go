@@ -5,6 +5,7 @@ package transfer
 import (
 	"fmt"
 	"io"
+	"log"
 	"path"
 	"path/filepath"
 	"strings"
@@ -52,47 +53,86 @@ func (e *SFTPExecutor) Execute() (*TransferResult, error) {
 	e.startTime = time.Now()
 	e.lastProgressTime = e.startTime
 
+	log.Printf("Transfer executor starting...")
+
 	// Connect to source
 	e.progress.Status = "connecting"
 	e.sendProgress()
+	
+	log.Printf("Connecting to source: %s@%s:%d", 
+		e.request.SourceConfig.Username,
+		e.request.SourceConfig.Host,
+		e.request.SourceConfig.Port)
 
 	if err := e.connectSource(); err != nil {
+		log.Printf("ERROR: Failed to connect to source: %v", err)
 		return &TransferResult{
 			Success:      false,
 			ErrorMessage: fmt.Sprintf("Failed to connect to source: %v", err),
 		}, err
 	}
 	defer e.closeSource()
+	log.Printf("✓ Source connected successfully")
 
 	// Connect to destination
+	log.Printf("Connecting to destination: %s@%s:%d",
+		e.request.DestConfig.Username,
+		e.request.DestConfig.Host,
+		e.request.DestConfig.Port)
+
 	if err := e.connectDest(); err != nil {
+		log.Printf("ERROR: Failed to connect to destination: %v", err)
 		return &TransferResult{
 			Success:      false,
 			ErrorMessage: fmt.Sprintf("Failed to connect to destination: %v", err),
 		}, err
 	}
 	defer e.closeDest()
+	log.Printf("✓ Destination connected successfully")
 
-	// Scan source to get file list
-	e.progress.Status = "scanning"
-	e.sendProgress()
+	// Get file list - either from pre-scan or by scanning now
+	var files []scanner.FileEntry
+	var err error
+	
+	if len(e.request.Files) > 0 {
+		// Use pre-scanned files (from initial scan)
+		files = e.request.Files
+		log.Printf("Using pre-scanned file list: %d files", len(files))
+	} else {
+		// Need to scan source to get file list
+		e.progress.Status = "scanning"
+		e.sendProgress()
+		
+		log.Printf("No pre-scanned files provided, scanning source directory: %s", e.request.SourceConfig.RootPath)
 
-	files, err := e.scanSource()
-	if err != nil {
-		return &TransferResult{
-			Success:      false,
-			ErrorMessage: fmt.Sprintf("Failed to scan source: %v", err),
-		}, err
+		files, err = e.scanSource()
+		if err != nil {
+			log.Printf("ERROR: Failed to scan source: %v", err)
+			return &TransferResult{
+				Success:      false,
+				ErrorMessage: fmt.Sprintf("Failed to scan source: %v", err),
+			}, err
+		}
+		
+		log.Printf("✓ Scan complete: %d files found", len(files))
 	}
 
 	e.progress.TotalFiles = len(files)
 	e.progress.TotalBytes = e.calculateTotalSize(files)
+	
+	log.Printf("Transfer will process: %d files, %d bytes total", 
+		e.progress.TotalFiles, 
+		e.progress.TotalBytes)
 
 	// Transfer files
 	e.progress.Status = "transferring"
 	e.sendProgress()
+	
+	log.Printf("Starting file transfer (%d files)...", len(files))
 
 	var skippedFiles, failedFiles []string
+	transferredCount := 0
+	lastLogTime := time.Now()
 
 	for _, file := range files {
 		if e.cancelled {
@@ -135,14 +175,32 @@ func (e *SFTPExecutor) Execute() (*TransferResult, error) {
 				e.progress.ErrorsCount++
 				e.progress.LastError = fmt.Sprintf("Failed to transfer %s: %v", file.Path, err)
 				failedFiles = append(failedFiles, file.Path)
+				log.Printf("  ✗ Failed: %s - %v", file.Path, err)
 			} else {
 				e.progress.FilesTransferred++
 				e.progress.BytesTransferred += file.Size
+				transferredCount++
+				
+				// Log progress every 100 files or every 5 seconds
+				if transferredCount%100 == 0 || time.Since(lastLogTime) > 5*time.Second {
+					percentComplete := float64(e.progress.FilesTransferred) / float64(e.progress.TotalFiles) * 100
+					log.Printf("  Progress: %d/%d files (%.1f%%), %.2f MB transferred",
+						e.progress.FilesTransferred,
+						e.progress.TotalFiles,
+						percentComplete,
+						float64(e.progress.BytesTransferred)/1024/1024)
+					lastLogTime = time.Now()
+				}
 			}
 		}
 
 		e.updateProgress()
 	}
+
+	log.Printf("Transfer phase complete!")
+	log.Printf("  Transferred: %d files", transferredCount)
+	log.Printf("  Skipped: %d files", len(skippedFiles))
+	log.Printf("  Failed: %d files", len(failedFiles))
 
 	e.progress.Status = "completed"
 	e.progress.PercentComplete = 100.0
@@ -162,11 +220,22 @@ func (e *SFTPExecutor) Execute() (*TransferResult, error) {
 		FailedFiles:      failedFiles,
 	}
 
+	log.Printf("========================================")
+	log.Printf("TRANSFER COMPLETE!")
+	log.Printf("  Duration: %s", duration)
+	log.Printf("  Files transferred: %d", e.progress.FilesTransferred)
+	log.Printf("  Bytes transferred: %.2f MB", float64(e.progress.BytesTransferred)/1024/1024)
+	log.Printf("  Average speed: %.2f MB/s", avgSpeed)
+	log.Printf("  Errors: %d", len(failedFiles))
+	log.Printf("========================================")
+
 	// Verify if requested
 	if e.request.VerifyAfterTransfer && !e.request.DryRun {
 		e.progress.Status = "verifying"
 		e.sendProgress()
+		log.Printf("Starting verification...")
 		result.VerificationResult = e.verify()
+		log.Printf("Verification complete")
 	}
 
 	return result, nil

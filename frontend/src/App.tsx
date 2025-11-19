@@ -1,132 +1,72 @@
-import { useState, useEffect } from 'react'
-import { ConnectionsScreen } from '@/components/screens/ConnectionsScreen'
-import { PlanScreen } from '@/components/screens/PlanScreen'
-import { TransferConfigScreen, type TransferConfig } from '@/components/screens/TransferConfigScreen'
-import { TransferExecutionScreen } from '@/components/screens/TransferExecutionScreen'
-import type { ConnectionConfig, ProbeResult } from '@/types/probe'
-import type { ScanResult, PlanResult } from '@/types/scanner'
-import { saveSessionState, loadSessionState, clearSessionState } from '@/lib/storage'
+import { useState } from 'react';
+import './App.css';
+import RemotesScreen from './components/simple/RemotesScreen';
+import MigrationScreen from './components/simple/MigrationScreen';
+import HistoryScreen from './components/simple/HistoryScreen';
 
-type Screen = 'connections' | 'plan' | 'transfer-config' | 'transfer-execution'
-
-interface ServerData {
-  config: ConnectionConfig
-  probe: ProbeResult
-}
+type Screen = 'remotes' | 'migration' | 'history';
 
 function App() {
-  const [currentScreen, setCurrentScreen] = useState<Screen>('connections')
-  const [sourceServer, setSourceServer] = useState<ServerData | null>(null)
-  const [destServer, setDestServer] = useState<ServerData | null>(null)
-  const [scanResult, setScanResult] = useState<ScanResult | null>(null)
-  const [planResult, setPlanResult] = useState<PlanResult | null>(null)
-  const [transferConfig, setTransferConfig] = useState<TransferConfig | null>(null)
-
-  // Load session state on mount
-  useEffect(() => {
-    const savedState = loadSessionState()
-    if (savedState) {
-      console.log('Restoring session state from', new Date(savedState.timestamp))
-      setCurrentScreen(savedState.currentScreen as Screen)
-      setSourceServer(savedState.sourceServer)
-      setDestServer(savedState.destServer)
-      setScanResult(savedState.scanResult)
-      setPlanResult(savedState.planResult)
-      setTransferConfig(savedState.transferConfig)
-    }
-  }, [])
-
-  // Save session state whenever it changes
-  useEffect(() => {
-    // Don't save if we're on the connections screen with no data
-    if (currentScreen === 'connections' && !sourceServer && !destServer) {
-      return
-    }
-
-    saveSessionState({
-      currentScreen,
-      sourceServer,
-      destServer,
-      scanResult,
-      planResult,
-      transferConfig,
-    })
-  }, [currentScreen, sourceServer, destServer, scanResult, planResult, transferConfig])
-
-  const handleConnectionsNext = (source: ServerData, dest: ServerData) => {
-    setSourceServer(source)
-    setDestServer(dest)
-    setCurrentScreen('plan')
-  }
-
-  const handlePlanNext = (scan: ScanResult, plan: PlanResult) => {
-    setScanResult(scan)
-    setPlanResult(plan)
-    setCurrentScreen('transfer-config')
-  }
-
-  const handleBackToConnections = () => {
-    setCurrentScreen('connections')
-  }
-
-  const handleBackToPlan = () => {
-    setCurrentScreen('plan')
-  }
-
-  const handleBackToConfig = () => {
-    setCurrentScreen('transfer-config')
-  }
-
-  const handleStartTransfer = (config: TransferConfig) => {
-    setTransferConfig(config)
-    setCurrentScreen('transfer-execution')
-  }
-
-  const handleTransferComplete = () => {
-    // Reset and go back to connections
-    clearSessionState()
-    setCurrentScreen('connections')
-    setSourceServer(null)
-    setDestServer(null)
-    setScanResult(null)
-    setPlanResult(null)
-    setTransferConfig(null)
-  }
+  const [currentScreen, setCurrentScreen] = useState<Screen>('remotes');
 
   return (
-    <>
-      {currentScreen === 'connections' && (
-        <ConnectionsScreen onNext={handleConnectionsNext} />
-      )}
-      {currentScreen === 'plan' && sourceServer && destServer && (
-        <PlanScreen
-          source={sourceServer}
-          dest={destServer}
-          onBack={handleBackToConnections}
-          onNext={handlePlanNext}
-        />
-      )}
-      {currentScreen === 'transfer-config' && sourceServer && destServer && scanResult && planResult && (
-        <TransferConfigScreen
-          plan={planResult}
-          scanResult={scanResult}
-          source={sourceServer}
-          dest={destServer}
-          onBack={handleBackToPlan}
-          onStartTransfer={handleStartTransfer}
-        />
-      )}
-      {currentScreen === 'transfer-execution' && sourceServer && destServer && planResult && transferConfig && (
-        <TransferExecutionScreen
-          plan={planResult}
-          sourceConfig={sourceServer.config}
-          destConfig={destServer.config}
-          onComplete={handleTransferComplete}
-          onBack={handleBackToConfig}
-        />
-      )}
-    </>
-  )
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-white shadow">
+        <div className="max-w-7xl mx-auto px-4 py-4">
+          <h1 className="text-2xl font-bold text-gray-900">
+            Website Mover - Rclone Edition
+          </h1>
+        </div>
+      </header>
+
+      {/* Navigation */}
+      <nav className="bg-white border-b">
+        <div className="max-w-7xl mx-auto px-4">
+          <div className="flex space-x-4">
+            <button
+              onClick={() => setCurrentScreen('remotes')}
+              className={`py-3 px-4 border-b-2 font-medium text-sm ${
+                currentScreen === 'remotes'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Remotes
+            </button>
+            <button
+              onClick={() => setCurrentScreen('migration')}
+              className={`py-3 px-4 border-b-2 font-medium text-sm ${
+                currentScreen === 'migration'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Migration
+            </button>
+            <button
+              onClick={() => setCurrentScreen('history')}
+              className={`py-3 px-4 border-b-2 font-medium text-sm ${
+                currentScreen === 'history'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              History
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-4 py-6">
+        {currentScreen === 'remotes' && <RemotesScreen />}
+        {currentScreen === 'migration' && <MigrationScreen />}
+        {currentScreen === 'history' && <HistoryScreen />}
+      </main>
+    </div>
+  );
 }
 
-export default App
+export default App;
+
