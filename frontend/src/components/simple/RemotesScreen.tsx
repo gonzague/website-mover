@@ -23,6 +23,22 @@ export default function RemotesScreen() {
   // Confirmation Dialog State
   const [remoteToDelete, setRemoteToDelete] = useState<string | null>(null);
 
+  // Update port when type changes
+  const handleTypeChange = (newType: string) => {
+    const defaultPorts: Record<string, number> = {
+      sftp: 22,
+      ftp: 21,
+      rsync: 873,
+      s3: 0, // S3 doesn't use port
+    };
+    
+    setFormData({
+      ...formData,
+      type: newType,
+      port: defaultPorts[newType] || 22,
+    });
+  };
+
   // Form state
   const [formData, setFormData] = useState<Remote>({
     name: '',
@@ -32,6 +48,14 @@ export default function RemotesScreen() {
     password: '',
     port: 22,
     key_file: '',
+    // S3 fields
+    provider: 'AWS',
+    access_key_id: '',
+    secret_access_key: '',
+    region: 'us-east-1',
+    endpoint: '',
+    acl: 'private',
+    params: {},
   });
 
   useEffect(() => {
@@ -56,6 +80,9 @@ export default function RemotesScreen() {
   };
 
   const handleEditRemote = (remote: Remote) => {
+    // Extract S3 fields from params if present
+    const params = remote.params || {};
+    
     setFormData({
       name: remote.name,
       type: remote.type,
@@ -64,6 +91,14 @@ export default function RemotesScreen() {
       password: '', // Don't fill password for security, user must re-enter if changing
       port: remote.port,
       key_file: remote.key_file || '',
+      // S3 fields - check both top-level and params
+      provider: remote.provider || params.provider || 'AWS',
+      access_key_id: remote.access_key_id || params.access_key_id || '',
+      secret_access_key: '', // Don't fill for security
+      region: remote.region || params.region || 'us-east-1',
+      endpoint: remote.endpoint || params.endpoint || '',
+      acl: remote.acl || params.acl || 'private',
+      params: params,
     });
     setEditingRemote(remote.name);
     setShowAddForm(true);
@@ -72,7 +107,24 @@ export default function RemotesScreen() {
   const handleAddRemote = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await addRemote(formData);
+      // Build params based on backend type
+      const params: Record<string, string> = {};
+      
+      if (formData.type === 's3') {
+        if (formData.provider) params.provider = formData.provider;
+        if (formData.access_key_id) params.access_key_id = formData.access_key_id;
+        if (formData.secret_access_key) params.secret_access_key = formData.secret_access_key;
+        if (formData.region) params.region = formData.region;
+        if (formData.endpoint) params.endpoint = formData.endpoint;
+        if (formData.acl) params.acl = formData.acl;
+      }
+      
+      const remoteData = {
+        ...formData,
+        params: Object.keys(params).length > 0 ? params : undefined,
+      };
+      
+      await addRemote(remoteData);
       await loadRemotes();
       setShowAddForm(false);
       setEditingRemote(null);
@@ -84,6 +136,13 @@ export default function RemotesScreen() {
         password: '',
         port: 22,
         key_file: '',
+        provider: 'AWS',
+        access_key_id: '',
+        secret_access_key: '',
+        region: 'us-east-1',
+        endpoint: '',
+        acl: 'private',
+        params: {},
       });
       toast({
         title: "Success",
@@ -110,6 +169,13 @@ export default function RemotesScreen() {
       password: '',
       port: 22,
       key_file: '',
+      provider: 'AWS',
+      access_key_id: '',
+      secret_access_key: '',
+      region: 'us-east-1',
+      endpoint: '',
+      acl: 'private',
+      params: {},
     });
   };
 
@@ -235,16 +301,18 @@ export default function RemotesScreen() {
                       title="Connection Type"
                       content={
                         <div className="space-y-2">
-                          <p><strong>SFTP (Secure FTP):</strong> Most common and secure. Uses SSH (port 22).</p>
+                          <p><strong>SFTP:</strong> Secure FTP over SSH (port 22). Most common and secure.</p>
                           <p><strong>FTP:</strong> Traditional file transfer protocol. Less secure but widely supported.</p>
-                          <p className="text-sm text-gray-600 pt-2">💡 Tip: Use SFTP when available for better security.</p>
+                          <p><strong>Rsync:</strong> Efficient sync protocol. Only transfers changed portions of files. Requires rsync on both servers.</p>
+                          <p><strong>S3:</strong> Amazon S3 or compatible cloud storage. Great for backups and static hosting.</p>
+                          <p className="text-sm text-gray-600 pt-2">💡 Tip: Use SFTP for standard migrations, Rsync for large repeated syncs, S3 for backups.</p>
                         </div>
                       }
                     />
                   </div>
                   <Select
                     value={formData.type}
-                    onValueChange={(value) => setFormData({ ...formData, type: value })}
+                    onValueChange={handleTypeChange}
                   >
                     <SelectTrigger id="type">
                       <SelectValue placeholder="Select type" />
@@ -252,10 +320,191 @@ export default function RemotesScreen() {
                     <SelectContent>
                       <SelectItem value="sftp">SFTP</SelectItem>
                       <SelectItem value="ftp">FTP</SelectItem>
+                      <SelectItem value="rsync">Rsync</SelectItem>
+                      <SelectItem value="s3">Amazon S3 / Compatible</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
               </div>
+
+              {/* S3-specific fields */}
+              {formData.type === 's3' && (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <div className="flex items-center">
+                        <Label htmlFor="provider">Provider</Label>
+                        <HelpTooltip
+                          title="S3 Provider"
+                          content={
+                            <div className="space-y-2">
+                              <p>The S3-compatible service you're using:</p>
+                              <ul className="list-disc list-inside ml-2">
+                                <li><strong>AWS:</strong> Amazon Web Services S3</li>
+                                <li><strong>DigitalOcean:</strong> DigitalOcean Spaces</li>
+                                <li><strong>Wasabi:</strong> Wasabi Hot Cloud Storage</li>
+                                <li><strong>Backblaze:</strong> Backblaze B2 S3 Compatible</li>
+                                <li><strong>Minio:</strong> Self-hosted S3-compatible</li>
+                              </ul>
+                            </div>
+                          }
+                        />
+                      </div>
+                      <Select
+                        value={formData.provider}
+                        onValueChange={(value) => setFormData({ ...formData, provider: value })}
+                      >
+                        <SelectTrigger id="provider">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="AWS">AWS S3</SelectItem>
+                          <SelectItem value="DigitalOcean">DigitalOcean Spaces</SelectItem>
+                          <SelectItem value="Wasabi">Wasabi</SelectItem>
+                          <SelectItem value="Backblaze">Backblaze B2</SelectItem>
+                          <SelectItem value="Minio">Minio</SelectItem>
+                          <SelectItem value="Other">Other S3-Compatible</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center">
+                        <Label htmlFor="region">Region</Label>
+                        <HelpTooltip
+                          title="Region"
+                          content={
+                            <div className="space-y-2">
+                              <p>The AWS region or data center location.</p>
+                              <p className="text-sm">Examples: us-east-1, eu-west-1, ap-southeast-1</p>
+                              <p className="text-sm text-gray-600">For non-AWS providers, check their documentation for region format.</p>
+                            </div>
+                          }
+                        />
+                      </div>
+                      <Input
+                        id="region"
+                        value={formData.region}
+                        onChange={(e) => setFormData({ ...formData, region: e.target.value })}
+                        placeholder="us-east-1"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <div className="flex items-center">
+                        <Label htmlFor="access_key_id">Access Key ID</Label>
+                        <HelpTooltip
+                          title="Access Key ID"
+                          content={
+                            <div className="space-y-2">
+                              <p>Your S3 access key ID (public identifier).</p>
+                              <p className="text-sm text-gray-600">Find this in your provider's IAM or API keys section.</p>
+                            </div>
+                          }
+                        />
+                      </div>
+                      <Input
+                        id="access_key_id"
+                        value={formData.access_key_id}
+                        onChange={(e) => setFormData({ ...formData, access_key_id: e.target.value })}
+                        placeholder="AKIAIOSFODNN7EXAMPLE"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center">
+                        <Label htmlFor="secret_access_key">Secret Access Key</Label>
+                        <HelpTooltip
+                          title="Secret Access Key"
+                          content={
+                            <div className="space-y-2">
+                              <p>Your S3 secret access key (private key).</p>
+                              <p className="bg-yellow-50 border border-yellow-200 rounded p-2 text-sm">
+                                ⚠️ Keep this secret! It's like a password for your S3 buckets.
+                              </p>
+                            </div>
+                          }
+                        />
+                      </div>
+                      <Input
+                        id="secret_access_key"
+                        type="password"
+                        value={formData.secret_access_key}
+                        onChange={(e) => setFormData({ ...formData, secret_access_key: e.target.value })}
+                        placeholder={editingRemote ? "(Leave empty to keep existing)" : ""}
+                        required={!editingRemote}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <div className="flex items-center">
+                        <Label htmlFor="endpoint">Endpoint (optional)</Label>
+                        <HelpTooltip
+                          title="Custom Endpoint"
+                          content={
+                            <div className="space-y-2">
+                              <p>Custom S3 endpoint URL. Only needed for:</p>
+                              <ul className="list-disc list-inside ml-2 text-sm">
+                                <li>Non-AWS providers (DigitalOcean, Minio, etc.)</li>
+                                <li>Self-hosted S3-compatible services</li>
+                              </ul>
+                              <p className="text-sm">Example: https://nyc3.digitaloceanspaces.com</p>
+                              <p className="text-sm text-gray-600">Leave empty for standard AWS S3.</p>
+                            </div>
+                          }
+                        />
+                      </div>
+                      <Input
+                        id="endpoint"
+                        value={formData.endpoint}
+                        onChange={(e) => setFormData({ ...formData, endpoint: e.target.value })}
+                        placeholder="https://s3.example.com"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center">
+                        <Label htmlFor="acl">ACL</Label>
+                        <HelpTooltip
+                          title="Access Control List"
+                          content={
+                            <div className="space-y-2">
+                              <p>Default permissions for uploaded files:</p>
+                              <ul className="list-disc list-inside ml-2 text-sm">
+                                <li><strong>private:</strong> Only you can access (most secure)</li>
+                                <li><strong>public-read:</strong> Anyone can read files</li>
+                                <li><strong>authenticated-read:</strong> Authenticated users only</li>
+                              </ul>
+                              <p className="text-sm text-gray-600 pt-2">💡 Use "private" for backups and site files.</p>
+                            </div>
+                          }
+                        />
+                      </div>
+                      <Select
+                        value={formData.acl}
+                        onValueChange={(value) => setFormData({ ...formData, acl: value })}
+                      >
+                        <SelectTrigger id="acl">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="private">Private</SelectItem>
+                          <SelectItem value="public-read">Public Read</SelectItem>
+                          <SelectItem value="public-read-write">Public Read/Write</SelectItem>
+                          <SelectItem value="authenticated-read">Authenticated Read</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* SFTP/FTP/Rsync fields */}
+              {(formData.type === 'sftp' || formData.type === 'ftp' || formData.type === 'rsync') && (
+                <>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -303,32 +552,36 @@ export default function RemotesScreen() {
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <div className="flex items-center">
-                  <Label htmlFor="key_file">SSH Key File (optional)</Label>
-                  <HelpTooltip
-                    title="SSH Key Authentication"
-                    content={
-                      <div className="space-y-2">
-                        <p>Use SSH key-based authentication instead of password. More secure and convenient.</p>
-                        <p className="text-sm text-gray-600">Example paths:</p>
-                        <ul className="list-disc list-inside ml-2 text-sm">
-                          <li>~/.ssh/id_rsa</li>
-                          <li>~/.ssh/id_ed25519</li>
-                          <li>/path/to/custom/key</li>
-                        </ul>
-                        <p className="text-sm text-gray-600 pt-2">If specified, password will be ignored.</p>
-                      </div>
-                    }
+              {formData.type === 'sftp' && (
+                <div className="space-y-2">
+                  <div className="flex items-center">
+                    <Label htmlFor="key_file">SSH Key File (optional)</Label>
+                    <HelpTooltip
+                      title="SSH Key Authentication"
+                      content={
+                        <div className="space-y-2">
+                          <p>Use SSH key-based authentication instead of password. More secure and convenient.</p>
+                          <p className="text-sm text-gray-600">Example paths:</p>
+                          <ul className="list-disc list-inside ml-2 text-sm">
+                            <li>~/.ssh/id_rsa</li>
+                            <li>~/.ssh/id_ed25519</li>
+                            <li>/path/to/custom/key</li>
+                          </ul>
+                          <p className="text-sm text-gray-600 pt-2">If specified, password will be ignored.</p>
+                        </div>
+                      }
+                    />
+                  </div>
+                  <Input
+                    id="key_file"
+                    value={formData.key_file}
+                    onChange={(e) => setFormData({ ...formData, key_file: e.target.value })}
+                    placeholder="~/.ssh/id_rsa"
                   />
                 </div>
-                <Input
-                  id="key_file"
-                  value={formData.key_file}
-                  onChange={(e) => setFormData({ ...formData, key_file: e.target.value })}
-                  placeholder="~/.ssh/id_rsa"
-                />
-              </div>
+              )}
+              </>
+              )}
 
               <div className="flex gap-2">
                 <Button type="submit" className="flex-1">
@@ -375,7 +628,15 @@ export default function RemotesScreen() {
                   <div>
                     <CardTitle className="text-lg">{remote.name}</CardTitle>
                     <CardDescription>
-                      {remote.type.toUpperCase()} - {remote.user}@{remote.host}:{remote.port}
+                      {remote.type === 's3' ? (
+                        <>
+                          {remote.type.toUpperCase()} - {remote.params?.provider || remote.provider || 'AWS'} ({remote.params?.region || remote.region || 'us-east-1'})
+                        </>
+                      ) : (
+                        <>
+                          {remote.type.toUpperCase()} - {remote.user}@{remote.host}:{remote.port}
+                        </>
+                      )}
                     </CardDescription>
                   </div>
                   <div className="flex gap-2">

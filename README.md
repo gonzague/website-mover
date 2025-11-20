@@ -100,6 +100,7 @@ On your first visit, you'll see a **welcome tour** that walks you through:
 ## 🎨 Features
 
 - **Modern UI**: Built with React 19, TypeScript, and Shadcn UI components
+- **Multiple Backends**: SFTP, FTP, Rsync, Amazon S3 & compatible services
 - **Guided Onboarding**: Interactive welcome tour and step-by-step workflow guidance
 - **Contextual Help**: Inline tooltips explaining technical concepts and options
 - **Live Statistics**: Real-time transfer speed, file count, and size tracking
@@ -122,6 +123,15 @@ Create a `.env` file in the `frontend` directory:
 ```bash
 VITE_API_BASE=http://your-backend-url:8080/api
 ```
+
+## 🔌 Supported Backends
+
+- **SFTP** - Secure FTP over SSH (most common)
+- **FTP** - Traditional FTP
+- **Rsync** - Efficient delta sync (great for repeated migrations)
+- **S3** - Amazon S3 and compatible services (AWS, DigitalOcean Spaces, Wasabi, Backblaze B2, Minio)
+
+For detailed backend information, see [BACKENDS.md](./BACKENDS.md).
 
 ## 📁 Data Storage
 
@@ -175,17 +185,6 @@ This tool leverages **rclone** - a mature, battle-tested file transfer tool that
 - ✅ Offers flexible exclude patterns
 - ✅ Includes integrity checking
 - ✅ Optimizes parallel transfers
-
-## 🆚 Comparison to Custom Implementation
-
-| Feature | Custom Implementation | Rclone Edition |
-|---------|----------------------|----------------|
-| Lines of Code | ~5000+ | ~1500 |
-| Backends Supported | SFTP, FTP | 40+ protocols |
-| Resume Support | Custom logic | Built-in |
-| Bandwidth Limiting | Manual implementation | Built-in |
-| Maturity | New | Battle-tested |
-| Maintenance | High | Low (use rclone updates) |
 
 ## 🚀 Future Enhancements
 

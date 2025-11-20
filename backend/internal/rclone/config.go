@@ -67,26 +67,63 @@ func (cm *ConfigManager) AddRemote(remote Remote) error {
 	}
 
 	section.Key("type").SetValue(remote.Type)
-	section.Key("host").SetValue(remote.Host)
-	section.Key("user").SetValue(remote.User)
-	section.Key("port").SetValue(fmt.Sprintf("%d", remote.Port))
-
-	if remote.Password != "" {
-		// Obscure password (rclone compatible)
-		obscured, err := obscurePassword(remote.Password)
-		if err != nil {
-			return fmt.Errorf("failed to obscure password: %w", err)
+	
+	// Handle type-specific fields
+	switch remote.Type {
+	case "sftp", "ftp", "rsync":
+		// These types need host, user, port
+		if remote.Host != "" {
+			section.Key("host").SetValue(remote.Host)
 		}
-		section.Key("pass").SetValue(obscured)
-	}
-
-	if remote.KeyFile != "" {
-		section.Key("key_file").SetValue(remote.KeyFile)
+		if remote.User != "" {
+			section.Key("user").SetValue(remote.User)
+		}
+		if remote.Port > 0 {
+			section.Key("port").SetValue(fmt.Sprintf("%d", remote.Port))
+		}
+		
+		if remote.Password != "" {
+			// Obscure password (rclone compatible)
+			obscured, err := obscurePassword(remote.Password)
+			if err != nil {
+				return fmt.Errorf("failed to obscure password: %w", err)
+			}
+			section.Key("pass").SetValue(obscured)
+		}
+		
+		if remote.KeyFile != "" {
+			section.Key("key_file").SetValue(remote.KeyFile)
+		}
+	case "s3":
+		// S3-specific fields - don't set host/user/port
+		// Provider, region, endpoint, etc. will be in Params
+	default:
+		// For other types, set host/user/port if provided
+		if remote.Host != "" {
+			section.Key("host").SetValue(remote.Host)
+		}
+		if remote.User != "" {
+			section.Key("user").SetValue(remote.User)
+		}
+		if remote.Port > 0 {
+			section.Key("port").SetValue(fmt.Sprintf("%d", remote.Port))
+		}
 	}
 
 	// Add any additional parameters
 	for key, value := range remote.Params {
-		section.Key(key).SetValue(value)
+		if value != "" {
+			// Handle password/secret obscuring
+			if key == "secret_access_key" || key == "pass" {
+				obscured, err := obscurePassword(value)
+				if err != nil {
+					return fmt.Errorf("failed to obscure %s: %w", key, err)
+				}
+				section.Key(key).SetValue(obscured)
+			} else {
+				section.Key(key).SetValue(value)
+			}
+		}
 	}
 
 	if err := cfg.SaveTo(cm.configPath); err != nil {
@@ -121,7 +158,21 @@ func (cm *ConfigManager) GetRemote(name string) (*Remote, error) {
 		remote.KeyFile = section.Key("key_file").String()
 	}
 
-	// Note: We don't return the password for security
+	// Read additional params (for S3, etc.)
+	// Skip standard fields we already have
+	skipKeys := map[string]bool{
+		"type": true, "host": true, "user": true, "port": true,
+		"pass": true, "key_file": true, "password": true,
+	}
+	
+	for _, key := range section.Keys() {
+		keyName := key.Name()
+		if !skipKeys[keyName] {
+			remote.Params[keyName] = key.String()
+		}
+	}
+	
+	// Note: We don't return passwords/secrets for security
 	
 	return remote, nil
 }
@@ -150,6 +201,19 @@ func (cm *ConfigManager) ListRemotes() ([]Remote, error) {
 
 		if section.HasKey("key_file") {
 			remote.KeyFile = section.Key("key_file").String()
+		}
+
+		// Read additional params (for S3, etc.)
+		skipKeys := map[string]bool{
+			"type": true, "host": true, "user": true, "port": true,
+			"pass": true, "key_file": true, "password": true, "secret_access_key": true,
+		}
+		
+		for _, key := range section.Keys() {
+			keyName := key.Name()
+			if !skipKeys[keyName] {
+				remote.Params[keyName] = key.String()
+			}
 		}
 
 		remotes = append(remotes, remote)

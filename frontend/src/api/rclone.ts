@@ -8,6 +8,15 @@ export interface Remote {
   password?: string;
   port: number;
   key_file?: string;
+  // S3-specific fields
+  provider?: string;
+  access_key_id?: string;
+  secret_access_key?: string;
+  region?: string;
+  endpoint?: string;
+  acl?: string;
+  // Generic params for other backends
+  params?: Record<string, string>;
 }
 
 export interface MigrationOptions {
