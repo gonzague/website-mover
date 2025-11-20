@@ -1,4 +1,7 @@
-# Website Mover - Rclone Edition
+# Website Mover
+
+<img width="1536" height="1024" alt="website-mover" src="https://github.com/user-attachments/assets/f5d2c36e-0337-4096-a849-00fff5d34815" />
+
 
 A simplified, powerful tool to migrate websites between servers using `rclone`.
 
