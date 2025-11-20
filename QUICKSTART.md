@@ -50,20 +50,23 @@ Visit: http://localhost:5173
 
 ## Your First Migration
 
+Supports **SFTP**, **FTP**, **Rsync**, and **Amazon S3** backends!
+
 ### Step 1: Add Remotes
 
 1. Click the **Remotes** tab
 2. Click **Add Remote**
-3. Fill in your source server details:
-   - Name: `source-server`
-   - Type: SFTP
-   - Host: `old-server.com`
-   - Port: 22
-   - Username: `your-user`
-   - Password: (your password or leave empty for SSH key)
-4. Click **Save Remote**
-5. Click **Test** to verify connection
-6. Repeat for destination server
+3. Choose your backend type:
+   - **SFTP** - Standard secure migration
+   - **FTP** - Traditional file transfer
+   - **Rsync** - Efficient delta sync (large sites)
+   - **S3** - Cloud storage backup
+4. Fill in your connection details
+   - For SFTP/FTP/Rsync: Host, Port, Username, Password
+   - For S3: Provider, Region, Access Keys
+5. Click **Save Remote**
+6. Click **Test** to verify connection
+7. Repeat for destination remote
 
 ### Step 2: Configure Migration
 
@@ -89,23 +92,13 @@ Click the **History** tab to see:
 - Commands used
 - Full output logs
 
-## Example: Migrate WordPress Site
+## Examples
 
-Your WordPress site at `old-server.com:/var/www/mysite` to `new-server.com:/home/sites/mysite`
+### Example 1: Migrate WordPress Site (SFTP)
 
-**Remotes Configuration:**
-
-Remote 1:
-- Name: `OldServer`
-- Host: `old-server.com`
-- User: `admin`
-- Port: 22
-
-Remote 2:
-- Name: `NewServer`
-- Host: `new-server.com`
-- User: `webuser`
-- Port: 22
+**Remotes:**
+- Source: `OldServer` (SFTP - old-server.com:22)
+- Destination: `NewServer` (SFTP - new-server.com:22)
 
 **Migration:**
 - Source: `OldServer:/var/www/mysite`
@@ -113,11 +106,31 @@ Remote 2:
 - Transfers: 8
 - Dry Run: ✅ (first time)
 
-Click **Start Migration** and watch the magic happen!
+### Example 2: Large Site with Rsync
+
+**Remotes:**
+- Source: `Production` (Rsync - prod-server.com:873)
+- Destination: `Staging` (Rsync - staging-server.com:873)
+
+**Why Rsync:** Only transfers changed file portions - perfect for 10GB+ sites with frequent updates!
+
+### Example 3: Backup to Cloud (S3)
+
+**Remotes:**
+- Source: `WebServer` (SFTP - mysite.com:22)
+- Destination: `S3Backup` (S3 - AWS us-east-1)
+
+**Migration:**
+- Source: `WebServer:/var/www/html`
+- Destination: `S3Backup:mybucket/backups/mysite/`
+- ACL: private
+
+**Why S3:** Off-site backup with versioning and disaster recovery!
 
 ## Tips
 
 ### First Time Setup
+- Choose the right backend: **SFTP** (standard), **Rsync** (large/repeated), **S3** (backups)
 - Always use **Dry Run** first to preview what will happen
 - **Test** both remotes before starting migration
 - Review the generated command before executing

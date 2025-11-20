@@ -89,7 +89,8 @@ On your first visit, you'll see a **welcome tour** that walks you through:
 
 ### Standard Workflow
 
-1. **Configure Remotes**: Add your source and destination servers (SFTP/FTP)
+1. **Configure Remotes**: Add your source and destination
+   - Choose from **SFTP**, **FTP**, **Rsync**, or **S3**
    - Hover over help icons (?) for explanations of each field
    - Use the "Test" button to verify connectivity
 2. **Start Migration**: Configure your migration options
@@ -99,6 +100,13 @@ On your first visit, you'll see a **welcome tour** that walks you through:
 4. **View History**: Check past migrations with detailed logs and statistics
 
 **💡 Tip**: The Migration tab is disabled until you configure at least 2 remotes. The step indicator at the top shows your progress!
+
+### Choosing the Right Backend
+
+- **SFTP**: Standard secure file transfer (most common)
+- **FTP**: Traditional protocol (less secure)
+- **Rsync**: Efficient delta sync for large sites or repeated migrations
+- **S3**: Cloud storage backup to AWS, DigitalOcean Spaces, Wasabi, etc.
 
 ## 🎨 Features
 

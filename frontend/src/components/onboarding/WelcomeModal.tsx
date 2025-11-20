@@ -38,7 +38,7 @@ export function WelcomeModal({ open, onComplete }: WelcomeModalProps) {
             </ul>
           </div>
           <p className="text-gray-600">
-            No need to install anything on your servers - just SFTP/FTP access is required!
+            Supports multiple backends: <strong>SFTP, FTP, Rsync, and Amazon S3</strong>. Choose what works best for your workflow!
           </p>
         </div>
       ),
@@ -55,7 +55,7 @@ export function WelcomeModal({ open, onComplete }: WelcomeModalProps) {
               <div>
                 <h4 className="font-semibold">Configure Remotes</h4>
                 <p className="text-sm text-gray-600">
-                  Add your source and destination servers with SFTP or FTP credentials
+                  Add your source and destination using SFTP, FTP, Rsync, or S3
                 </p>
               </div>
             </div>

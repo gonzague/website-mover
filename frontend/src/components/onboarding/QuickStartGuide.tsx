@@ -36,15 +36,21 @@ export function QuickStartGuide() {
             </h4>
             <div className="space-y-2 text-sm">
               <div className="bg-white rounded p-3 border border-blue-100">
-                <strong className="text-blue-700">WordPress Migration:</strong>
+                <strong className="text-blue-700">WordPress Migration (SFTP):</strong>
                 <p className="text-gray-600 mt-1">
                   Use the pre-configured exclude patterns for cache and log files. Don't forget to export/import your database separately!
                 </p>
               </div>
               <div className="bg-white rounded p-3 border border-blue-100">
-                <strong className="text-blue-700">Full Site Backup:</strong>
+                <strong className="text-blue-700">Large Site Sync (Rsync):</strong>
                 <p className="text-gray-600 mt-1">
-                  Set high transfer count (16+) for faster backups. Consider bandwidth limits if backing up during business hours.
+                  Use Rsync for efficient delta sync - only transfers changed file portions. Perfect for repeated migrations or large sites (5GB+).
+                </p>
+              </div>
+              <div className="bg-white rounded p-3 border border-blue-100">
+                <strong className="text-blue-700">Cloud Backup (S3):</strong>
+                <p className="text-gray-600 mt-1">
+                  Backup to AWS S3, DigitalOcean Spaces, or Backblaze B2 for off-site storage with versioning. Great for disaster recovery!
                 </p>
               </div>
             </div>
@@ -68,6 +74,10 @@ export function QuickStartGuide() {
               <li className="flex items-start gap-2">
                 <span className="text-green-500 font-bold">✓</span>
                 <span>Review and customize <strong>exclude patterns</strong> for your CMS</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-green-500 font-bold">✓</span>
+                <span>Choose the right backend: <strong>SFTP</strong> for standard, <strong>Rsync</strong> for large/repeated, <strong>S3</strong> for backups</span>
               </li>
               <li className="flex items-start gap-2">
                 <span className="text-green-500 font-bold">✓</span>
