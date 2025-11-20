@@ -430,16 +430,30 @@ services:
 
 ### Development vs Production
 
-**Development:**
+**Development (Recommended):**
+Run services natively for faster iteration and hot reload:
 ```bash
-# Build from source for faster iteration
-docker-compose -f docker-compose.dev.yml up --build
+# Terminal 1 - Backend
+cd backend
+go run cmd/server/main.go
+
+# Terminal 2 - Frontend  
+cd frontend
+npm install
+npm run dev
 ```
 
 **Production:**
 ```bash
 # Use pre-built images
 docker-compose up -d
+```
+
+**Testing Docker Build:**
+```bash
+# Build from source (for testing)
+docker-compose build
+docker-compose up
 ```
 
 ### Multi-Platform Builds

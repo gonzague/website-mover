@@ -30,9 +30,9 @@ git clone https://github.com/gonzague/website-mover.git
 cd website-mover
 ```
 
-### Development
+### Development (Recommended)
 
-Open two terminals:
+For development with hot reload, run services natively:
 
 **Terminal 1 (Backend)**
 ```bash
@@ -48,6 +48,12 @@ npm install
 npm run dev
 # UI available at http://localhost:5173
 ```
+
+**💡 Why not Docker for development?**
+- Native execution is faster
+- Hot reload works out of the box
+- Easier debugging
+- No build time on code changes
 
 ### Production Build
 
