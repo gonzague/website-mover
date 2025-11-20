@@ -7,7 +7,7 @@ A simplified, powerful tool to migrate websites between servers using `rclone`.
 
 ## 🎯 Vision
 
-Migrate websites (WordPress, PrestaShop, etc.) between hosts using SFTP/FTP without installing anything on the source or destination servers. This tool provides a modern web UI to configure and monitor `rclone` operations.
+Migrate websites (WordPress, PrestaShop, etc.) between hosts using **SFTP, FTP, Rsync, or cloud storage (S3)**. This tool provides a modern web UI to configure and monitor `rclone` operations with support for multiple backends.
 
 ## 🏗️ Architecture
 
@@ -18,9 +18,10 @@ Migrate websites (WordPress, PrestaShop, etc.) between hosts using SFTP/FTP with
 
 ### Prerequisites
 
-- **[rclone](https://rclone.org/install/)** must be installed and available in your PATH.
-- Node.js 18+
-- Go 1.25+
+- **[rclone](https://rclone.org/install/)** must be installed and available in your PATH
+- Node.js 18+ (for development)
+- Go 1.25+ (for development)
+- Docker & Docker Compose (for production deployment)
 
 ### Installation
 
@@ -61,15 +62,28 @@ make all
 
 The easiest way to run Website Mover is using Docker:
 
+#### Using Pre-built Images (Recommended)
+
+```bash
+# Pull and run the latest images from Docker Hub
+docker-compose up -d
+
+# Stop the application
+docker-compose down
+```
+
+Docker images are automatically built via GitHub Actions on every push to main:
+- `gonzague/website-mover-frontend:latest`
+- `gonzague/website-mover-backend:latest`
+
+#### Building from Source
+
 ```bash
 # Build and start the application
 docker-compose up --build
 
 # Or run in detached mode
-docker-compose up -d
-
-# Stop the application
-docker-compose down
+docker-compose up --build -d
 ```
 
 The application will be available at:
@@ -77,6 +91,8 @@ The application will be available at:
 - **Backend API**: http://localhost:8080
 
 **Note**: The Docker setup automatically mounts your local `~/.config/rclone` directory, so your existing rclone remotes will be available in the container.
+
+For detailed Docker deployment instructions, reverse proxy setup, and production configuration, see [DOCKER.md](./DOCKER.md).
 
 ## 📖 Usage
 

@@ -1,15 +1,23 @@
 services:
   backend:
-    build: ./backend
+    image: gonzague/website-mover-backend:latest
+    # Uncomment to build from source instead:
+    # build: ./backend
+    container_name: website-mover-backend
     ports:
       - "8080:8080"
     volumes:
       - ~/.config/rclone:/root/.config/rclone
       - ~/.config/website-mover:/root/.config/website-mover
+    environment:
+      - PORT=8080
     restart: unless-stopped
 
   frontend:
-    build: ./frontend
+    image: gonzague/website-mover-frontend:latest
+    # Uncomment to build from source instead:
+    # build: ./frontend
+    container_name: website-mover-frontend
     ports:
       - "3000:80"
     depends_on:

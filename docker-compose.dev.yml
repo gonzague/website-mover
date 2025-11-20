@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: website-mover-backend-dev
+    ports:
+      - "8080:8080"
+    volumes:
+      - ~/.config/rclone:/root/.config/rclone
+      - ~/.config/website-mover:/root/.config/website-mover
+      # Mount source for development
+      - ./backend:/app
+    environment:
+      - PORT=8080
+      - GO_ENV=development
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    container_name: website-mover-frontend-dev
+    ports:
+      - "3000:80"
+      - "5173:5173"  # Vite dev server
+    volumes:
+      # Mount source for hot reload
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_BASE=http://localhost:8080/api
+    depends_on:
+      - backend
+    restart: unless-stopped
+
